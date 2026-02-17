@@ -1,0 +1,30 @@
+name: Unity EditMode Tests
+
+on:
+  pull_request:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  editmode-tests:
+    if: ${{ secrets.UNITY_LICENSE != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run EditMode tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          testMode: EditMode
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          artifactsPath: artifacts
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-editmode-test-results
+          path: artifacts

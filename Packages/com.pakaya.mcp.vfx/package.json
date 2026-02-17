@@ -1,0 +1,21 @@
+{
+  "name": "com.pakaya.mcp.vfx",
+  "version": "0.1.0",
+  "displayName": "Pakaya MCP VFX Tools",
+  "description": "URP-first VFX Graph custom tools for MCP for Unity.",
+  "unity": "2021.3",
+  "author": {
+    "name": "Pakaya"
+  },
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.unity.render-pipelines.universal": "17.0.0",
+    "com.unity.visualeffectgraph": "17.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "unity",
+    "vfx",
+    "urp"
+  ]
+}
