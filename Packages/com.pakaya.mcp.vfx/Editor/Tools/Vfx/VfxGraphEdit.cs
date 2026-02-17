@@ -82,15 +82,205 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
         }
 
+        /// <summary>
+        /// Removes a node (operator, context, or parameter) from the VFX Graph by instance ID.
+        /// Blocks are redirected to RemoveBlock. Contexts with active flow links return a warning.
+        /// </summary>
+        public static object RemoveNode(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            int nodeId = @params["nodeId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
+
+            if (string.IsNullOrEmpty(path) || nodeId == 0)
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+            var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
+
+            if (node == null)
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
+
+            // If it's a block, redirect to RemoveBlock
+            Type vfxBlockBase = GetVFXType("VFXBlock");
+            if (vfxBlockBase != null && vfxBlockBase.IsAssignableFrom(node.GetType()))
+            {
+                return RemoveBlock(new JObject { ["path"] = path, ["blockId"] = nodeId });
+            }
+
+            try
+            {
+                string nodeTypeName = node.GetType().Name;
+
+                // Use graph.RemoveChild(node, true) via reflection
+                MethodInfo removeMethod = graph.GetType().GetMethod("RemoveChild",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                if (removeMethod == null)
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "RemoveChild method not found on graph" };
+
+                removeMethod.Invoke(graph, new object[] { node, true });
+
+                EditorUtility.SetDirty(resource);
+                AssetDatabase.SaveAssets();
+
+                return new { success = true, message = $"Removed node {nodeTypeName} (id:{nodeId})" };
+            }
+            catch (TargetInvocationException tie)
+            {
+                var inner = tie.InnerException ?? tie;
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error removing node: {inner.Message}", detail = inner.StackTrace };
+            }
+            catch (Exception ex)
+            {
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error removing node: {ex.Message}" };
+            }
+        }
+
+        /// <summary>
+        /// Moves a node to a new position in the VFX Graph editor canvas.
+        /// </summary>
+        public static object MoveNode(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            int nodeId = @params["nodeId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
+            JToken positionToken = @params["position"];
+
+            if (string.IsNullOrEmpty(path) || nodeId == 0 || positionToken == null)
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, nodeId, and position are required" };
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+            var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
+
+            if (node == null)
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
+
+            try
+            {
+                var pos = ManageVfxCommon.ParseVec2(positionToken);
+                PropertyInfo posProp = node.GetType().GetProperty("position",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                if (posProp == null)
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "position property not found on node" };
+
+                posProp.SetValue(node, pos);
+
+                EditorUtility.SetDirty(resource);
+                AssetDatabase.SaveAssets();
+
+                return new { success = true, message = $"Moved {node.GetType().Name} to ({pos.x}, {pos.y})", data = new { x = pos.x, y = pos.y } };
+            }
+            catch (Exception ex)
+            {
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error moving node: {ex.Message}" };
+            }
+        }
+
+        /// <summary>
+        /// Duplicates a node in the VFX Graph, copying its type, position (with offset), and settings.
+        /// Connections are NOT copied — the caller must reconnect.
+        /// </summary>
+        public static object DuplicateNode(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            int nodeId = @params["nodeId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
+
+            if (string.IsNullOrEmpty(path) || nodeId == 0)
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+            var sourceNode = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
+
+            if (sourceNode == null)
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
+
+            try
+            {
+                ScriptableObject newNode = ScriptableObject.CreateInstance(sourceNode.GetType());
+                if (newNode == null)
+                    return new { success = false, message = $"Failed to create instance of {sourceNode.GetType().Name}" };
+
+                // Copy position with offset
+                PropertyInfo posProp = sourceNode.GetType().GetProperty("position",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (posProp != null)
+                {
+                    try
+                    {
+                        Vector2 srcPos = (Vector2)posProp.GetValue(sourceNode);
+                        posProp.SetValue(newNode, srcPos + new Vector2(50, 50));
+                    }
+                    catch { }
+                }
+
+                // Copy VFXSetting-attributed fields
+                Type currentType = sourceNode.GetType();
+                while (currentType != null && currentType != typeof(ScriptableObject))
+                {
+                    foreach (var field in currentType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                    {
+                        bool hasSettingAttr = field.GetCustomAttributes(true)
+                            .Any(a => a.GetType().Name.Contains("VFXSetting"));
+                        if (hasSettingAttr)
+                        {
+                            try { field.SetValue(newNode, field.GetValue(sourceNode)); }
+                            catch { }
+                        }
+                    }
+                    currentType = currentType.BaseType;
+                }
+
+                // Add to graph
+                MethodInfo addMethod = VfxGraphReflectionCache.GetMethodCached(
+                    graph.GetType(), "AddChild", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (addMethod == null)
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "AddChild method not found on graph" };
+
+                addMethod.Invoke(graph, new object[] { newNode, -1, true });
+
+                EditorUtility.SetDirty(resource);
+                AssetDatabase.SaveAssets();
+
+                return new
+                {
+                    success = true,
+                    id = newNode.GetInstanceID(),
+                    message = $"Duplicated {sourceNode.GetType().Name} (source:{nodeId} → new:{newNode.GetInstanceID()})",
+                    data = new { sourceId = nodeId, newId = newNode.GetInstanceID(), type = sourceNode.GetType().Name }
+                };
+            }
+            catch (TargetInvocationException tie)
+            {
+                var inner = tie.InnerException ?? tie;
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error duplicating node: {inner.Message}" };
+            }
+            catch (Exception ex)
+            {
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error duplicating node: {ex.Message}" };
+            }
+        }
+
         public static object ConnectNodes(JObject @params)
         {
             string path = @params["path"]?.ToString();
             if (string.IsNullOrEmpty(path)) return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
 
-            int parentId = @params["parentNodeId"]?.ToObject<int>() ?? 0;
-            string parentSlotName = @params["parentSlot"]?.ToString();
-            int childId = @params["childNodeId"]?.ToObject<int>() ?? 0;
-            string childSlotName = @params["childSlot"]?.ToString();
+            int parentId = @params["parentNodeId"]?.ToObject<int>() ?? (@params["fromNodeId"]?.ToObject<int>() ?? 0);
+            string parentSlotName = @params["parentSlot"]?.ToString() ?? @params["fromSlot"]?.ToString();
+            int childId = @params["childNodeId"]?.ToObject<int>() ?? (@params["toNodeId"]?.ToObject<int>() ?? 0);
+            string childSlotName = @params["childSlot"]?.ToString() ?? @params["toSlot"]?.ToString();
 
             if (parentId == 0 || childId == 0) return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Parent and Child Node IDs are required" };
             // Allow empty slot names (operators sometimes have empty output slot names)
@@ -451,7 +641,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                                 type = child.GetType().Name,
                                 index = blockIdx,
                                 inputSlots = blockInputSlots,
-                                outputSlots = blockOutputSlots
+                                outputSlots = blockOutputSlots,
+                                hint = "This block's id can be used with set_node_property, get_node_settings, and set_node_setting."
                             });
                             blockIdx++;
                         }
@@ -742,11 +933,30 @@ namespace MCPForUnity.Editor.Tools.Vfx
             catch (TargetInvocationException tie)
             {
                 var inner = tie.InnerException ?? tie;
-                return new { success = false, message = $"Error linking contexts: {inner.Message}", detail = inner.StackTrace };
+                int srcFlowCount = GetFlowSlotCount(fromNode, "outputFlowSlot");
+                int tgtFlowCount = GetFlowSlotCount(toNode, "inputFlowSlot");
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.InternalException,
+                    message = $"Error linking contexts: {inner.Message}",
+                    details = new
+                    {
+                        sourceType = fromNode.GetType().Name,
+                        targetType = toNode.GetType().Name,
+                        sourceOutputFlowSlots = srcFlowCount,
+                        targetInputFlowSlots = tgtFlowCount,
+                        requestedFromFlowIndex = fromIndex,
+                        requestedToFlowIndex = toIndex,
+                        remediation = "Ensure the source context type can flow to the target type. " +
+                                      "Standard flow: Spawner → Initialize → Update → Output. " +
+                                      "For GPU Events, use link_gpu_event or add a TriggerEvent block first."
+                    }
+                };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error linking contexts: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error linking contexts: {ex.Message}" };
             }
         }
 
@@ -760,11 +970,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             int contextId = @params["contextId"]?.ToObject<int>() ?? 0;
-            string blockType = @params["blockType"]?.ToString();
+            string blockType = @params["blockType"]?.ToString() ?? @params["type"]?.ToString();
             int index = @params["index"]?.ToObject<int>() ?? -1; // -1 = append
 
             if (string.IsNullOrEmpty(path) || contextId == 0 || string.IsNullOrEmpty(blockType))
-                return new { success = false, message = "Path, contextId, and blockType are required" };
+                return new { success = false, message = "Path, contextId, and blockType (or type) are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -837,10 +1047,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object RemoveBlock(JObject @params)
         {
             string path = @params["path"]?.ToString();
-            int blockId = @params["blockId"]?.ToObject<int>() ?? 0;
+            int blockId = @params["blockId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
 
             if (string.IsNullOrEmpty(path) || blockId == 0)
-                return new { success = false, message = "Path and blockId are required" };
+                return new { success = false, message = "Path and blockId (or id) are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -1023,11 +1233,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             int nodeId = @params["nodeId"]?.ToObject<int>() ?? 0;
-            string settingName = @params["settingName"]?.ToString();
+            string settingName = @params["settingName"]?.ToString() ?? @params["setting"]?.ToString();
             JToken valueToken = @params["value"];
 
             if (string.IsNullOrEmpty(path) || nodeId == 0 || string.IsNullOrEmpty(settingName) || valueToken == null)
-                return new { success = false, message = "Path, nodeId, settingName, and value are required" };
+                return new { success = false, message = "Path, nodeId, settingName (or setting), and value are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -1962,7 +2172,8 @@ public class {scriptName} : MonoBehaviour
                 {
                     success = true,
                     message = $"Created GraphicsBuffer helper script at {fullPath}",
-                    data = new { path = fullPath, propertyName = vfxPropertyName, stride, count }
+                    data = new { path = fullPath, propertyName = vfxPropertyName, stride, count },
+                    warning = "Script creation triggered AssetDatabase.Refresh(). Tools may be briefly unavailable during domain reload."
                 };
             }
             catch (Exception ex)
@@ -1983,10 +2194,10 @@ public class {scriptName} : MonoBehaviour
             string path = @params["path"]?.ToString();
             int sourceContextId = @params["sourceContextId"]?.ToObject<int>() ?? 0;
             int gpuEventContextId = @params["gpuEventContextId"]?.ToObject<int>() ?? 0;
-            int sourceFlowIndex = @params["sourceFlowIndex"]?.ToObject<int>() ?? 0;
+            int sourceFlowIndex = @params["sourceFlowIndex"]?.ToObject<int>() ?? -1;
 
             if (string.IsNullOrEmpty(path) || sourceContextId == 0 || gpuEventContextId == 0)
-                return new { success = false, message = "Path, sourceContextId, and gpuEventContextId are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, sourceContextId, and gpuEventContextId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -1997,21 +2208,31 @@ public class {scriptName} : MonoBehaviour
             var sourceContext = models.FirstOrDefault(m => m.GetInstanceID() == sourceContextId);
             var gpuEventContext = models.FirstOrDefault(m => m.GetInstanceID() == gpuEventContextId);
 
-            if (sourceContext == null) return new { success = false, message = $"Source context {sourceContextId} not found" };
-            if (gpuEventContext == null) return new { success = false, message = $"GPU Event context {gpuEventContextId} not found" };
+            if (sourceContext == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Source context {sourceContextId} not found" };
+            if (gpuEventContext == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"GPU Event context {gpuEventContextId} not found" };
 
             try
             {
                 Type vfxContextType = GetVFXType("VFXContext");
                 if (vfxContextType == null)
-                    return new { success = false, message = "VFXContext type not found" };
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "VFXContext type not found" };
 
-                // Link source context's flow output to GPU Event context's flow input
+                // Collect flow slot info for diagnostics
+                int outputFlowCount = GetFlowSlotCount(sourceContext, "outputFlowSlot");
+                int inputFlowCount = GetFlowSlotCount(gpuEventContext, "inputFlowSlot");
+
+                // If sourceFlowIndex not specified, try the GPU event slot (usually index 1+)
+                if (sourceFlowIndex < 0)
+                    sourceFlowIndex = outputFlowCount > 1 ? 1 : 0;
+
+                // Try LinkTo first, then LinkFrom, capturing actual errors
+                var errors = new List<string>();
+                bool linked = false;
+
                 var linkToMethods = sourceContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     .Where(m => m.Name == "LinkTo")
                     .ToArray();
 
-                bool linked = false;
                 foreach (var method in linkToMethods)
                 {
                     var parms = method.GetParameters();
@@ -2019,20 +2240,22 @@ public class {scriptName} : MonoBehaviour
                     {
                         try
                         {
-                            if (parms.Length == 1)
-                                method.Invoke(sourceContext, new object[] { gpuEventContext });
-                            else if (parms.Length == 3)
+                            if (parms.Length == 3)
                                 method.Invoke(sourceContext, new object[] { gpuEventContext, sourceFlowIndex, 0 });
+                            else if (parms.Length == 1)
+                                method.Invoke(sourceContext, new object[] { gpuEventContext });
                             linked = true;
                             break;
                         }
-                        catch { continue; }
+                        catch (TargetInvocationException tie)
+                        {
+                            errors.Add($"LinkTo({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                        }
                     }
                 }
 
                 if (!linked)
                 {
-                    // Try LinkFrom on the GPU event
                     var linkFromMethods = gpuEventContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                         .Where(m => m.Name == "LinkFrom")
                         .ToArray();
@@ -2044,20 +2267,42 @@ public class {scriptName} : MonoBehaviour
                         {
                             try
                             {
-                                if (parms.Length == 1)
-                                    method.Invoke(gpuEventContext, new object[] { sourceContext });
-                                else if (parms.Length == 3)
+                                if (parms.Length == 3)
                                     method.Invoke(gpuEventContext, new object[] { sourceContext, sourceFlowIndex, 0 });
+                                else if (parms.Length == 1)
+                                    method.Invoke(gpuEventContext, new object[] { sourceContext });
                                 linked = true;
                                 break;
                             }
-                            catch { continue; }
+                            catch (TargetInvocationException tie)
+                            {
+                                errors.Add($"LinkFrom({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                            }
                         }
                     }
                 }
 
                 if (!linked)
-                    return new { success = false, message = "Could not link GPU Event" };
+                {
+                    return new
+                    {
+                        success = false,
+                        error_code = VfxErrorCodes.InternalException,
+                        message = "Could not link GPU Event. GPU Events require a TriggerEvent block (e.g. TriggerEventAlways, TriggerEventOnDie) in the source context to create the GPU event flow output.",
+                        details = new
+                        {
+                            sourceType = sourceContext.GetType().Name,
+                            targetType = gpuEventContext.GetType().Name,
+                            sourceOutputFlowSlots = outputFlowCount,
+                            targetInputFlowSlots = inputFlowCount,
+                            attemptedFlowIndex = sourceFlowIndex,
+                            linkErrors = errors,
+                            remediation = "1) Add a TriggerEventAlways or TriggerEventOnDie block to the source context via add_block. " +
+                                          "2) Then call link_gpu_event again — the source context will have an additional GPU event flow output. " +
+                                          "3) Alternatively, use link_contexts with the correct fromFlowIndex for the GPU event output."
+                        }
+                    };
+                }
 
                 EditorUtility.SetDirty(resource);
                 AssetDatabase.SaveAssets();
@@ -2066,8 +2311,34 @@ public class {scriptName} : MonoBehaviour
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error linking GPU Event: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error linking GPU Event: {ex.Message}" };
             }
+        }
+
+        /// <summary>
+        /// Gets the number of flow slots (input or output) on a context node.
+        /// </summary>
+        private static int GetFlowSlotCount(ScriptableObject contextNode, string slotFieldName)
+        {
+            try
+            {
+                var field = contextNode.GetType().GetField(slotFieldName,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (field != null)
+                {
+                    var slots = field.GetValue(contextNode) as Array;
+                    return slots?.Length ?? 0;
+                }
+                var prop = contextNode.GetType().GetProperty(slotFieldName,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (prop != null)
+                {
+                    var slots = prop.GetValue(contextNode) as Array;
+                    return slots?.Length ?? 0;
+                }
+            }
+            catch { }
+            return -1;
         }
 
         /// <summary>

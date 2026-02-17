@@ -51,15 +51,30 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         internal static readonly string[] GraphActions = new[]
         {
-            "get_graph_info", "add_node", "connect_nodes", "set_node_property", "set_node_setting",
-            "get_node_settings", "list_node_types", "link_contexts", "add_block", "remove_block",
-            "list_block_types", "add_property", "list_properties", "remove_property", "set_property_value",
-            "set_hlsl_code", "create_buffer_helper", "link_gpu_event", "set_space"
+            // Introspection
+            "get_graph_info",
+            // Node CRUD
+            "add_node", "remove_node", "move_node", "duplicate_node",
+            "connect_nodes", "set_node_property", "set_node_setting", "get_node_settings", "list_node_types",
+            // Context flow & blocks
+            "link_contexts", "add_block", "remove_block", "list_block_types",
+            // Blackboard properties
+            "add_property", "list_properties", "remove_property", "set_property_value",
+            // HLSL & buffer
+            "set_hlsl_code", "create_buffer_helper",
+            // GPU events & space
+            "link_gpu_event", "set_space",
+            // Asset lifecycle
+            "create_asset", "list_assets", "list_templates", "assign_asset"
         };
 
         internal static readonly IDictionary<string, string> GraphAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            { "graph_add_node", "add_node" }
+            { "graph_add_node", "add_node" },
+            { "delete_node", "remove_node" },
+            { "graph_remove_node", "remove_node" },
+            { "graph_move_node", "move_node" },
+            { "graph_duplicate_node", "duplicate_node" }
         };
 
         internal static string NormalizeGraphAction(string action)

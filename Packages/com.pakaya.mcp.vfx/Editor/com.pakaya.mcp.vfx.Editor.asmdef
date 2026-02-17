@@ -1,0 +1,28 @@
+{
+    "name": "com.pakaya.mcp.vfx.Editor",
+    "rootNamespace": "MCPForUnity.Editor.Tools.Vfx",
+    "references": [
+        "MCPForUnity.Editor",
+        "MCPForUnity.Runtime",
+        "Newtonsoft.Json",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.VisualEffectGraph.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.visualeffectgraph",
+            "expression": "",
+            "define": "VFX_GRAPH_PRESENT"
+        }
+    ],
+    "noEngineReferences": false
+}
