@@ -1,6 +1,7 @@
-# Unity MPC Tool to support VFX Graph changes
+# Unity MPC Tool to support VFX Graph changes in URP
 
-URP-first productionization of custom VFX tools for MCP for Unity.
+Warning : This is a Work In Progress tool with basic functionality tested. All the code here is written by AI tools in a very short time. It will be update as time goes on.
+
 
 ## What is included
 
@@ -16,10 +17,8 @@ URP-first productionization of custom VFX tools for MCP for Unity.
 - Tool source: `Assets/MCPForUnity/Editor/Tools/Vfx`
 - Package scaffold: `Packages/com.spiralingstudio.mcp.vfxgraph`
 - Tests: `Assets/MCPForUnity/Editor/Tests/Editor`
-- CI: `.github/workflows/unity-editmode-tests.yml`
 
 ## Upstream references
 
 - [unity-mcp repository](https://github.com/CoplayDev/unity-mcp)
 - [Custom tool authoring guide](https://raw.githubusercontent.com/CoplayDev/unity-mcp/beta/docs/reference/CUSTOM_TOOLS.md)
-- [Project README](https://raw.githubusercontent.com/CoplayDev/unity-mcp/beta/README.md)
