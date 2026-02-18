@@ -1,8 +1,8 @@
 {
-    "name": "com.pakaya.mcp.vfx.Editor.Tests",
+    "name": "com.spiralingstudio.mcp.vfxgraph.Editor.Tests",
     "rootNamespace": "",
     "references": [
-        "com.pakaya.mcp.vfx.Editor",
+        "com.spiralingstudio.mcp.vfxgraph.Editor",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

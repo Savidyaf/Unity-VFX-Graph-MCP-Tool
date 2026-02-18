@@ -2,7 +2,7 @@
 """Sync package VFX MCP tools into Assets compatibility path.
 
 Package path is the canonical source of truth:
-  Packages/com.pakaya.mcp.vfx/Editor/Tools/Vfx
+  Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx
 
 Assets path is maintained as a compatibility mirror:
   Assets/MCPForUnity/Editor/Tools/Vfx
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_VFX = REPO_ROOT / "Packages/com.pakaya.mcp.vfx/Editor/Tools/Vfx"
+PACKAGE_VFX = REPO_ROOT / "Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx"
 ASSETS_VFX = REPO_ROOT / "Assets/MCPForUnity/Editor/Tools/Vfx"
 
 

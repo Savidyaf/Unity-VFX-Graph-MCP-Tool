@@ -1,7 +1,7 @@
 {
   "dependencies": {
-    "com.pakaya.mcp.vfx": {
-      "version": "file:com.pakaya.mcp.vfx",
+    "com.spiralingstudio.mcp.vfxgraph": {
+      "version": "file:com.spiralingstudio.mcp.vfxgraph",
       "depth": 0,
       "source": "embedded",
       "dependencies": {

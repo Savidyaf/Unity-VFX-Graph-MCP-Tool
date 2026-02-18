@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Promoted `Packages/com.pakaya.mcp.vfx/Editor/Tools/Vfx` as canonical source for VFX MCP tooling.
+- Promoted `Packages/<package-name>/Editor/Tools/Vfx` as canonical source for VFX MCP tooling.
 - Added `scripts/sync_vfx_tools.py` to keep `Assets/MCPForUnity/Editor/Tools/Vfx` as a compatibility mirror.
 - Added CI workflow `.github/workflows/vfx-sync-check.yml` to detect package-assets drift.
 - Centralized all assembly/type resolution through `VfxGraphReflectionCache` with safe `ReflectionTypeLoadException` handling.

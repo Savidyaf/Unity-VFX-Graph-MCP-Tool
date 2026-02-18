@@ -20,6 +20,6 @@
 
 ## Packaging
 
-- [ ] `Packages/com.pakaya.mcp.vfx/package.json` updated
+- [ ] `Packages/com.spiralingstudio.mcp.vfxgraph/package.json` updated
 - [ ] `CHANGELOG.md` updated
 - [ ] Installation notes updated

@@ -2,7 +2,7 @@ using System.Reflection;
 using MCPForUnity.Editor.Tools.Vfx;
 using NUnit.Framework;
 
-namespace Pakaya.Mcp.Vfx.Tests.Editor
+namespace SpiralingStudio.Mcp.VfxGraph.Tests.Editor
 {
     public class VfxGraphReflectionCacheTests
     {

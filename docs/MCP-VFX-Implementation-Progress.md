@@ -1,6 +1,6 @@
 # MCP VFX Implementation Progress
 
-This document tracks implementation progress for the production-readiness plan of `com.pakaya.mcp.vfx`.
+This document tracks implementation progress for the production-readiness plan of `com.spiralingstudio.mcp.vfxgraph`.
 
 ## Status Legend
 
@@ -22,7 +22,7 @@ This document tracks implementation progress for the production-readiness plan o
 
 ## Decision Log
 
-- 2026-02-18: Canonical source is `Packages/com.pakaya.mcp.vfx/Editor/Tools/Vfx`.
+- 2026-02-18: Canonical source is `Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx`.
 - 2026-02-18: URP-only support remains enforced.
 - 2026-02-18: Use sync tooling and CI drift checks to keep `Assets/MCPForUnity/Editor/Tools/Vfx` compatible while package remains canonical.
 
@@ -93,12 +93,12 @@ This document tracks implementation progress for the production-readiness plan o
 
 ### Phase 5 Complete
 
-- Added package EditMode test assembly and test files under `Packages/com.pakaya.mcp.vfx/Tests/Editor`:
+- Added package EditMode test assembly and test files under `Packages/com.spiralingstudio.mcp.vfxgraph/Tests/Editor`:
   - `VfxInputValidationTests`
   - `VfxActionsTests`
   - `VfxGraphReflectionCacheTests`
 - Added internals visibility for package tests:
-  - `Packages/com.pakaya.mcp.vfx/Editor/VfxAssemblyInternals.cs`
+  - `Packages/com.spiralingstudio.mcp.vfxgraph/Editor/VfxAssemblyInternals.cs`
 - Updated CI workflow `.github/workflows/unity-editmode-tests.yml` with package-focused VFX test filter and artifacts.
 
 ### Phase 6 Complete

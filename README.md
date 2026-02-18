@@ -9,12 +9,12 @@ URP-first productionization of custom VFX tools for MCP for Unity.
 - Structured tool responses with `error_code` and `tool_version`.
 - URP compatibility gating for graph actions.
 - EditMode test and CI scaffolding.
-- UPM package scaffold at `Packages/com.pakaya.mcp.vfx`.
+- UPM package scaffold at `Packages/com.spiralingstudio.mcp.vfxgraph`.
 
 ## Key paths
 
 - Tool source: `Assets/MCPForUnity/Editor/Tools/Vfx`
-- Package scaffold: `Packages/com.pakaya.mcp.vfx`
+- Package scaffold: `Packages/com.spiralingstudio.mcp.vfxgraph`
 - Tests: `Assets/MCPForUnity/Editor/Tests/Editor`
 - CI: `.github/workflows/unity-editmode-tests.yml`
 

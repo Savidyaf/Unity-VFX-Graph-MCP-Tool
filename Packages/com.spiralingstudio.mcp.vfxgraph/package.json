@@ -1,11 +1,11 @@
 {
-  "name": "com.pakaya.mcp.vfx",
+  "name": "com.spiralingstudio.mcp.vfxgraph",
   "version": "0.1.0",
-  "displayName": "Pakaya MCP VFX Tools",
+  "displayName": "Spiraling Studio MCP VFX Graph Tools",
   "description": "URP-first VFX Graph custom tools for MCP for Unity.",
   "unity": "2021.3",
   "author": {
-    "name": "Pakaya"
+    "name": "Spiraling Studio"
   },
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.2.1",

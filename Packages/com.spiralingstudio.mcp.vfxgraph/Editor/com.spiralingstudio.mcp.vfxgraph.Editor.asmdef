@@ -1,5 +1,5 @@
 {
-    "name": "com.pakaya.mcp.vfx.Editor",
+    "name": "com.spiralingstudio.mcp.vfxgraph.Editor",
     "rootNamespace": "MCPForUnity.Editor.Tools.Vfx",
     "references": [
         "MCPForUnity.Editor",

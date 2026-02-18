@@ -1,6 +1,6 @@
-# Pakaya MCP VFX Tools
+# Spiraling Studio MCP VFX Graph Tools
 
-`com.pakaya.mcp.vfx` is a URP-first VFX Graph extension package for MCP for Unity.
+`com.spiralingstudio.mcp.vfxgraph` is a URP-first VFX Graph extension package for MCP for Unity.
 
 ## Purpose
 
@@ -8,7 +8,7 @@ This package enables AI agents to build and edit Unity VFX Graph assets through 
 
 ## Source of truth and compatibility
 
-- Canonical implementation is in `Packages/com.pakaya.mcp.vfx/Editor/Tools/Vfx`.
+- Canonical implementation is in `Packages/<package-name>/Editor/Tools/Vfx`.
 - `Assets/MCPForUnity/Editor/Tools/Vfx` is a compatibility mirror to support MCP runtime loading patterns.
 - Mirror sync command:
   - `python3 scripts/sync_vfx_tools.py --write`
@@ -78,7 +78,7 @@ This package enables AI agents to build and edit Unity VFX Graph assets through 
 - Deterministic contract responses with explicit `error_code` values.
 - Action routing isolates MCP schema from implementation details.
 - Reflection methods use caching to reduce lookup overhead.
-- New features require tests in `Packages/com.pakaya.mcp.vfx/Tests/Editor`.
+- New features require tests in `Packages/<package-name>/Tests/Editor`.
 - Package-focused tests are enforced by `.github/workflows/unity-editmode-tests.yml`.
 
 ## Pipeline support
