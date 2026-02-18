@@ -10,48 +10,51 @@ namespace MCPForUnity.Editor.Tools.Vfx
             new Dictionary<string, Func<JObject, object>>(StringComparer.OrdinalIgnoreCase)
             {
                 // Graph introspection
-                { "get_graph_info", VfxGraphIntrospectionService.GetGraphInfo },
+                { "get_graph_info", VfxGraphEdit.GetGraphInfo },
+                { "list_node_types", VfxGraphEdit.ListNodeTypes },
+                { "list_block_types", VfxGraphEdit.ListBlockTypes },
+                { "list_properties", VfxGraphEdit.ListProperties },
+                { "get_node_settings", VfxGraphEdit.GetNodeSettings },
+                { "get_connections", VfxGraphEdit.GetConnections },
+                { "save_graph", VfxGraphEdit.SaveGraph },
 
                 // Node CRUD
-                { "add_node", VfxGraphNodeOperations.AddNode },
-                { "remove_node", VfxGraphNodeOperations.RemoveNode },
-                { "move_node", VfxGraphNodeOperations.MoveNode },
-                { "duplicate_node", VfxGraphNodeOperations.DuplicateNode },
-                { "connect_nodes", VfxGraphNodeOperations.ConnectNodes },
-                { "disconnect_nodes", VfxGraphNodeOperations.DisconnectNodes },
-                { "get_connections", VfxGraphNodeOperations.GetConnections },
-                { "set_node_property", VfxGraphNodeOperations.SetNodeProperty },
-                { "set_node_setting", VfxGraphNodeOperations.SetNodeSetting },
-                { "get_node_settings", VfxGraphNodeOperations.GetNodeSettings },
-                { "list_node_types", VfxGraphNodeOperations.ListNodeTypes },
+                { "add_node", VfxGraphEdit.AddNode },
+                { "remove_node", VfxGraphEdit.RemoveNode },
+                { "move_node", VfxGraphEdit.MoveNode },
+                { "duplicate_node", VfxGraphEdit.DuplicateNode },
+                { "connect_nodes", VfxGraphEdit.ConnectNodes },
+                { "disconnect_nodes", VfxGraphEdit.DisconnectNodes },
+                { "set_node_property", VfxGraphEdit.SetNodeProperty },
+                { "set_node_setting", VfxGraphEdit.SetNodeSetting },
 
                 // Context flow & blocks
-                { "link_contexts", VfxGraphConnectionOperations.LinkContexts },
-                { "add_block", VfxGraphConnectionOperations.AddBlock },
-                { "remove_block", VfxGraphConnectionOperations.RemoveBlock },
-                { "list_block_types", VfxGraphConnectionOperations.ListBlockTypes },
+                { "link_contexts", VfxGraphEdit.LinkContexts },
+                { "add_block", VfxGraphEdit.AddBlock },
+                { "remove_block", VfxGraphEdit.RemoveBlock },
 
                 // Blackboard properties
-                { "add_property", VfxGraphPropertyOperations.AddProperty },
-                { "list_properties", VfxGraphPropertyOperations.ListProperties },
-                { "remove_property", VfxGraphPropertyOperations.RemoveProperty },
-                { "set_property_value", VfxGraphPropertyOperations.SetPropertyValue },
+                { "add_property", VfxGraphEdit.AddProperty },
+                { "remove_property", VfxGraphEdit.RemoveProperty },
+                { "set_property_value", VfxGraphEdit.SetPropertyDefaultValue },
 
                 // HLSL & buffer
-                { "set_hlsl_code", VfxGraphPropertyOperations.SetHlslCode },
-                { "create_buffer_helper", VfxGraphPropertyOperations.CreateBufferHelper },
+                { "set_hlsl_code", VfxGraphEdit.SetHLSLCode },
+                { "create_buffer_helper", VfxGraphEdit.CreateGraphicsBufferHelper },
 
                 // GPU events & space
-                { "link_gpu_event", VfxGraphConnectionOperations.LinkGpuEvent },
-                { "set_capacity", VfxGraphConnectionOperations.SetCapacity },
-                { "set_space", VfxGraphConnectionOperations.SetSpace },
+                { "link_gpu_event", VfxGraphEdit.LinkGPUEvent },
+                { "set_capacity", VfxGraphEdit.SetCapacity },
+                { "set_space", VfxGraphEdit.SetSpace },
 
                 // Asset lifecycle
-                { "create_asset", p => VfxGraphAssets.CreateAsset(p) },
-                { "list_assets", p => VfxGraphAssets.ListAssets(p) },
-                { "list_templates", p => VfxGraphAssets.ListTemplates(p) },
-                { "assign_asset", p => VfxGraphAssets.AssignAsset(p) },
-                { "save_graph", VfxGraphIntrospectionService.SaveGraph }
+                { "create_asset", VfxGraphAssets.CreateAsset },
+                { "list_assets", VfxGraphAssets.ListAssets },
+                { "list_templates", VfxGraphAssets.ListTemplates },
+                { "assign_asset", VfxGraphAssets.AssignAsset },
+
+                // Console (temporary workaround for broken upstream read_console in Unity 6)
+                { "read_vfx_console", VfxConsoleReader.HandleAction },
             };
 
         internal static bool TryHandle(string action, JObject @params, out object mappedResult)

@@ -52,6 +52,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 { "list_assets", VfxGraphAssets.ListAssets },
                 { "list_templates", VfxGraphAssets.ListTemplates },
                 { "assign_asset", VfxGraphAssets.AssignAsset },
+
+                // Console (temporary workaround for broken upstream read_console in Unity 6)
+                { "read_vfx_console", VfxConsoleReader.HandleAction },
             };
 
         internal static bool TryHandle(string action, JObject @params, out object mappedResult)

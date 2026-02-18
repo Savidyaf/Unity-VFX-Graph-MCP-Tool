@@ -337,7 +337,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 if (result)
                 {
                     PersistGraph(resource);
-                    return new { success = true, message = $"Connected {parentNode.name}:{parentSlotName} -> {childNode.name}:{childSlotName}" };
+                    return new { success = true, message = $"Connected {GetNodeDisplayName(parentNode)}:{parentSlotName} -> {GetNodeDisplayName(childNode)}:{childSlotName}" };
                 }
                 else
                 {
@@ -560,19 +560,33 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     else if (targetType == typeof(int)) valueToSet = valueToken.ToObject<int>();
                     else if (targetType == typeof(bool)) valueToSet = valueToken.ToObject<bool>();
                     else if (targetType == typeof(Vector2)) valueToSet = ManageVfxCommon.ParseVec2(valueToken);
-                    else if (targetType == typeof(Vector3)) valueToSet = ManageVfxCommon.ParseVector3(valueToken); // Line 174
+                    else if (targetType == typeof(Vector3)) valueToSet = ManageVfxCommon.ParseVector3(valueToken);
                     else if (targetType == typeof(Vector4)) valueToSet = ManageVfxCommon.ParseVector4(valueToken);
                     else if (targetType == typeof(Color)) valueToSet = ManageVfxCommon.ParseColor(valueToken);
                     else if (targetType == typeof(AnimationCurve)) valueToSet = ManageVfxCommon.ParseAnimationCurve(valueToken);
                     else if (targetType == typeof(Gradient)) valueToSet = ManageVfxCommon.ParseGradient(valueToken);
                     else if (targetType == typeof(string)) valueToSet = valueToken.ToString();
-                    else 
+                }
+
+                // VFX composite types (Vector, Position, Direction) wrap a Vector3 in a child slot.
+                // Their ToObject() silently produces zeroed objects, so try child-slot decomposition
+                // BEFORE the generic ToObject fallback.
+                if (valueToSet == null)
+                {
+                    if (TrySetCompositeSlotValue(inputSlot, valueToken, out string compositeDetail))
                     {
-                         try { valueToSet = valueToken.ToObject(targetType); }
-                         catch (Exception convEx) { Debug.LogWarning($"[VFX MCP] Type conversion to {targetType?.Name} failed: {convEx.Message}"); }
+                        PersistGraph(resource);
+                        return new { success = true, message = $"Set {propName} to {compositeDetail}" };
                     }
                 }
-                
+
+                // Generic ToObject as last typed attempt
+                if (valueToSet == null && targetType != null)
+                {
+                    try { valueToSet = valueToken.ToObject(targetType); }
+                    catch (Exception convEx) { Debug.LogWarning($"[VFX MCP] Type conversion to {targetType?.Name} failed: {convEx.Message}"); }
+                }
+
                 if (valueToSet == null) valueToSet = valueToken.ToString();
 
                 valueProp.SetValue(inputSlot, valueToSet);
@@ -664,6 +678,145 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// VFX composite types (Vector, Position, Direction) wrap a Vector3 in a child slot.
+        /// Attempts to find and set the inner Vector3/Color child slot when the parent slot's
+        /// value type doesn't match a standard type.
+        /// VFXSlot uses VFXModel's m_Children list and GetNbChildren()/GetChild() methods,
+        /// not a simple "children" property.
+        /// </summary>
+        private static bool TrySetCompositeSlotValue(object parentSlot, JToken valueToken, out string detail)
+        {
+            detail = null;
+            if (parentSlot == null) return false;
+
+            try
+            {
+                var childSlots = EnumerateVfxModelChildren(parentSlot);
+                foreach (var childSlot in childSlots)
+                {
+                    if (childSlot == null) continue;
+
+                    PropertyInfo childValueProp = childSlot.GetType().GetProperty("value",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (childValueProp == null || !childValueProp.CanWrite) continue;
+
+                    object childCurrent = childValueProp.GetValue(childSlot);
+                    Type childType = childCurrent?.GetType() ?? childValueProp.PropertyType;
+
+                    if (childType == typeof(Vector3))
+                    {
+                        Vector3 v = ManageVfxCommon.ParseVector3(valueToken);
+                        childValueProp.SetValue(childSlot, v);
+                        detail = $"{v} via child slot (Vector3)";
+                        return true;
+                    }
+                    if (childType == typeof(Vector4))
+                    {
+                        Vector4 v = ManageVfxCommon.ParseVector4(valueToken);
+                        childValueProp.SetValue(childSlot, v);
+                        detail = $"{v} via child slot (Vector4)";
+                        return true;
+                    }
+                    if (childType == typeof(Color))
+                    {
+                        Color c = ManageVfxCommon.ParseColor(valueToken);
+                        childValueProp.SetValue(childSlot, c);
+                        detail = $"{c} via child slot (Color)";
+                        return true;
+                    }
+                    if (childType == typeof(Vector2))
+                    {
+                        Vector2 v = ManageVfxCommon.ParseVec2(valueToken);
+                        childValueProp.SetValue(childSlot, v);
+                        detail = $"{v} via child slot (Vector2)";
+                        return true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[VFX MCP] TrySetCompositeSlotValue failed: {ex.Message}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Enumerates children of a VFXModel (base of VFXSlot) using multiple reflection strategies:
+        /// 1. GetNbChildren() + GetChild() methods (public VFXModel API)
+        /// 2. m_Children field (protected backing list)
+        /// 3. children property (if it exists)
+        /// </summary>
+        private static List<object> EnumerateVfxModelChildren(object model)
+        {
+            var result = new List<object>();
+            if (model == null) return result;
+
+            Type modelType = model.GetType();
+
+            // Strategy 1: GetNbChildren() + GetChild() -- the standard VFXModel API
+            MethodInfo getNbChildren = VfxGraphReflectionCache.GetMethodCached(modelType, "GetNbChildren",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (getNbChildren != null)
+            {
+                try
+                {
+                    int count = (int)getNbChildren.Invoke(model, null);
+                    if (count > 0)
+                    {
+                        MethodInfo getChild = modelType.GetMethod("GetChild",
+                            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                            null, new[] { typeof(int) }, null);
+                        if (getChild != null)
+                        {
+                            for (int i = 0; i < count; i++)
+                            {
+                                object child = getChild.Invoke(model, new object[] { i });
+                                if (child != null) result.Add(child);
+                            }
+                            return result;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // Strategy 2: m_Children field (protected List<VFXModel>)
+            FieldInfo childrenField = modelType.GetField("m_Children",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy);
+            if (childrenField != null)
+            {
+                try
+                {
+                    if (childrenField.GetValue(model) is IList childList)
+                    {
+                        foreach (var child in childList)
+                            if (child != null) result.Add(child);
+                        return result;
+                    }
+                }
+                catch { }
+            }
+
+            // Strategy 3: children property
+            PropertyInfo childrenProp = modelType.GetProperty("children",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (childrenProp != null)
+            {
+                try
+                {
+                    if (childrenProp.GetValue(model) is IEnumerable enumerable)
+                    {
+                        foreach (var child in enumerable)
+                            if (child != null) result.Add(child);
+                    }
+                }
+                catch { }
+            }
+
+            return result;
         }
 
         private static IEnumerable<object> EnumerateSlots(ScriptableObject model, bool isOutput)
@@ -2465,6 +2618,24 @@ public class {scriptName} : MonoBehaviour
 
                 if (!linked)
                 {
+                    // Fallback: try data-level slot connection (GPUEvent block evt output -> GPUEvent context evt input).
+                    // Flow slots may not be materialized until a full compile, but data slots are available immediately.
+                    linked = TryDataLevelGpuEventLink(sourceContext, gpuEventContext, graph, resource);
+                    if (linked)
+                    {
+                        return new
+                        {
+                            success = true,
+                            message = $"Linked GPU Event via data slot from {sourceContext.GetType().Name}[{sourceContextId}] → {gpuEventContext.GetType().Name}[{gpuEventContextId}]",
+                            data = new
+                            {
+                                linkMethod = "data_slot_fallback",
+                                sourceType = sourceContext.GetType().Name,
+                                targetType = gpuEventContext.GetType().Name
+                            }
+                        };
+                    }
+
                     return new
                     {
                         success = false,
@@ -2503,6 +2674,82 @@ public class {scriptName} : MonoBehaviour
             {
                 return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error linking GPU Event: {ex.Message}" };
             }
+        }
+
+        /// <summary>
+        /// Fallback for GPU Event linking: connects the GPUEvent block's evt output slot
+        /// to the GPU Event context's evt input slot via data-level Link(), bypassing
+        /// flow slots that may not be materialized until a full graph compile.
+        /// </summary>
+        private static bool TryDataLevelGpuEventLink(
+            ScriptableObject sourceContext,
+            ScriptableObject gpuEventContext,
+            ScriptableObject graph,
+            UnityEngine.Object resource)
+        {
+            try
+            {
+                // Find GPUEvent output slot on blocks within the source context
+                object evtOutputSlot = null;
+                var sourceChildren = new List<ScriptableObject>();
+                GetModelsRecursively(sourceContext, sourceChildren);
+
+                foreach (var child in sourceChildren)
+                {
+                    if (child == sourceContext) continue;
+                    var outSlot = FindGpuEventSlot(child, true);
+                    if (outSlot != null) { evtOutputSlot = outSlot; break; }
+                }
+
+                if (evtOutputSlot == null) return false;
+
+                // Find GPUEvent input slot on the GPU Event context
+                object evtInputSlot = FindGpuEventSlot(gpuEventContext, false);
+                if (evtInputSlot == null) return false;
+
+                MethodInfo linkMethod = VfxGraphReflectionCache.GetMethodCached(
+                    evtInputSlot.GetType(), "Link",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (linkMethod == null) return false;
+
+                bool result = (bool)linkMethod.Invoke(evtInputSlot, new object[] { evtOutputSlot, true });
+                if (result)
+                {
+                    PersistGraph(resource);
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[VFX MCP] TryDataLevelGpuEventLink fallback failed: {ex.Message}");
+            }
+            return false;
+        }
+
+        private static object FindGpuEventSlot(ScriptableObject node, bool isOutput)
+        {
+            string propName = isOutput ? "outputSlots" : "inputSlots";
+            PropertyInfo slotsProp = node.GetType().GetProperty(propName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (slotsProp == null) return null;
+
+            var slots = slotsProp.GetValue(node) as IEnumerable;
+            if (slots == null) return null;
+
+            foreach (var slot in slots)
+            {
+                PropertyInfo nameProp = slot.GetType().GetProperty("name",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                string slotName = nameProp?.GetValue(slot) as string ?? "";
+
+                Type slotValueType = slot.GetType();
+                if (slotName.Equals("evt", StringComparison.OrdinalIgnoreCase)
+                    || slotValueType.Name.IndexOf("GPUEvent", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return slot;
+                }
+            }
+            return null;
         }
 
         /// <summary>
@@ -2877,6 +3124,15 @@ public class {scriptName} : MonoBehaviour
                         float a = arr.Count >= 4 ? arr[3].ToObject<float>() : 1f;
                         return new Color(arr[0].ToObject<float>(), arr[1].ToObject<float>(), arr[2].ToObject<float>(), a);
                     }
+                    var obj = token as JObject;
+                    if (obj != null)
+                    {
+                        float r = obj["r"]?.ToObject<float>() ?? obj["x"]?.ToObject<float>() ?? 1f;
+                        float g = obj["g"]?.ToObject<float>() ?? obj["y"]?.ToObject<float>() ?? 1f;
+                        float b = obj["b"]?.ToObject<float>() ?? obj["z"]?.ToObject<float>() ?? 1f;
+                        float a = obj["a"]?.ToObject<float>() ?? obj["w"]?.ToObject<float>() ?? 1f;
+                        return new Color(r, g, b, a);
+                    }
                     return Color.white;
                 }
                 return token.ToObject(targetType);
@@ -2902,7 +3158,16 @@ public class {scriptName} : MonoBehaviour
                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                     if (valueProp != null)
                     {
-                        object converted = ConvertJTokenToType(valueToken, valueProp.PropertyType);
+                        // Slot property types can be wrappers; prefer the runtime value type when available.
+                        object currentValue = null;
+                        Type conversionType = valueProp.PropertyType;
+                        try { currentValue = valueProp.GetValue(slot); } catch { }
+                        if (currentValue != null)
+                            conversionType = currentValue.GetType();
+
+                        object converted = ConvertJTokenToType(valueToken, conversionType);
+                        if (converted == null && conversionType != valueProp.PropertyType)
+                            converted = ConvertJTokenToType(valueToken, valueProp.PropertyType);
                         if (converted != null)
                             valueProp.SetValue(slot, converted);
                     }
@@ -3003,7 +3268,8 @@ public class {scriptName} : MonoBehaviour
                 }
             }
 
-            return model.name;
+            if (!string.IsNullOrEmpty(model.name)) return model.name;
+            return model.GetType().Name;
         }
 
         private static object ConvertToSerializableType(Type serializableTypeType, string requestedTypeName)
@@ -3078,7 +3344,26 @@ public class {scriptName} : MonoBehaviour
                 contextData = null;
             }
 
-            return contextData != null;
+            if (contextData != null) return true;
+
+            // Fallback: SerializedObject can access serialized private fields even when
+            // runtime properties are uninitialized (e.g. freshly created contexts before compile).
+            try
+            {
+                var so = new SerializedObject(contextNode);
+                var dataSP = so.FindProperty("m_Data");
+                if (dataSP != null && dataSP.objectReferenceValue != null)
+                {
+                    contextData = dataSP.objectReferenceValue;
+                    return true;
+                }
+            }
+            catch
+            {
+                contextData = null;
+            }
+
+            return false;
         }
 
         private static bool TrySetCapacityOnData(object contextData, int capacity, out int previousCapacity, out string appliedVia)
@@ -3123,6 +3408,26 @@ public class {scriptName} : MonoBehaviour
                 mCapacityField.SetValue(contextData, capacity);
                 appliedVia = "field:m_Capacity(int)";
                 return true;
+            }
+
+            // Fallback: use SerializedObject to set capacity on VFXDataParticle.
+            // This works even when reflection properties aren't accessible.
+            if (contextData is UnityEngine.Object unityObj)
+            {
+                try
+                {
+                    var so = new SerializedObject(unityObj);
+                    var capSP = so.FindProperty("capacity");
+                    if (capSP != null)
+                    {
+                        previousCapacity = capSP.intValue;
+                        capSP.intValue = capacity;
+                        so.ApplyModifiedPropertiesWithoutUndo();
+                        appliedVia = "SerializedObject";
+                        return true;
+                    }
+                }
+                catch { }
             }
 
             return false;

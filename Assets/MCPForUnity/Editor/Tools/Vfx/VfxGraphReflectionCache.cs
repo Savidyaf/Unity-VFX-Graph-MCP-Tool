@@ -10,6 +10,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         private static readonly Dictionary<string, Type> TypeByName = new Dictionary<string, Type>(StringComparer.Ordinal);
         private static readonly Dictionary<string, MethodInfo> MethodBySignature = new Dictionary<string, MethodInfo>(StringComparer.Ordinal);
+        private static Assembly[] _cachedAssemblies;
 
         static VfxGraphReflectionCache()
         {
@@ -20,6 +21,19 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             TypeByName.Clear();
             MethodBySignature.Clear();
+            _cachedAssemblies = null;
+        }
+
+        internal static Assembly[] GetAssemblies()
+        {
+            return _cachedAssemblies ?? (_cachedAssemblies = AppDomain.CurrentDomain.GetAssemblies());
+        }
+
+        internal static IEnumerable<Type> SafeGetTypes(Assembly assembly)
+        {
+            try { return assembly.GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { return ex.Types.Where(t => t != null); }
+            catch { return Type.EmptyTypes; }
         }
 
         internal static Type GetEditorVfxType(string typeName)
@@ -27,19 +41,53 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (string.IsNullOrWhiteSpace(typeName)) return null;
             if (TypeByName.TryGetValue(typeName, out var cachedType)) return cachedType;
 
-            var resolved = AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(a =>
-                {
-                    try { return a.GetTypes(); }
-                    catch { return Type.EmptyTypes; }
-                })
+            var resolved = GetAssemblies()
+                .SelectMany(SafeGetTypes)
                 .FirstOrDefault(t =>
                     t.Name == typeName &&
                     t.Namespace != null &&
                     t.Namespace.StartsWith("UnityEditor.VFX", StringComparison.Ordinal));
 
-            TypeByName[typeName] = resolved;
+            if (resolved != null) TypeByName[typeName] = resolved;
             return resolved;
+        }
+
+        internal static Type ResolveType(string typeName, Type requiredBase = null, bool caseInsensitive = true)
+        {
+            if (string.IsNullOrWhiteSpace(typeName)) return null;
+            string cacheKey = typeName + "|" + (requiredBase?.FullName ?? "*");
+            if (TypeByName.TryGetValue(cacheKey, out var cached)) return cached;
+
+            var comparison = caseInsensitive ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+            var resolved = GetAssemblies()
+                .SelectMany(SafeGetTypes)
+                .FirstOrDefault(t =>
+                    (string.Equals(t.Name, typeName, comparison) ||
+                     string.Equals(t.FullName, typeName, comparison)) &&
+                    (requiredBase == null || requiredBase.IsAssignableFrom(t)));
+
+            TypeByName[cacheKey] = resolved;
+            return resolved;
+        }
+
+        internal static Type ResolveEnumType(string enumName)
+        {
+            if (string.IsNullOrWhiteSpace(enumName)) return null;
+            string cacheKey = "enum|" + enumName;
+            if (TypeByName.TryGetValue(cacheKey, out var cached)) return cached;
+
+            var resolved = GetAssemblies()
+                .SelectMany(SafeGetTypes)
+                .FirstOrDefault(t => t.Name == enumName && t.IsEnum);
+
+            TypeByName[cacheKey] = resolved;
+            return resolved;
+        }
+
+        internal static Assembly GetAssemblyByName(string assemblyName)
+        {
+            return GetAssemblies().FirstOrDefault(a => a.GetName().Name == assemblyName);
         }
 
         internal static MethodInfo GetMethodCached(Type ownerType, string methodName, BindingFlags flags)

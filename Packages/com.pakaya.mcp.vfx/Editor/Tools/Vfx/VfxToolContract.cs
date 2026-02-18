@@ -59,7 +59,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
             "add_property", "list_properties", "remove_property", "set_property_value",
             "set_hlsl_code", "create_buffer_helper",
             "link_gpu_event", "set_capacity", "set_space",
-            "create_asset", "list_assets", "list_templates", "assign_asset", "save_graph"
+            "create_asset", "list_assets", "list_templates", "assign_asset", "save_graph",
+            "read_vfx_console"
         };
 
         internal static readonly string[] GraphActions = GraphActionSet.ToArray();

@@ -25,10 +25,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     return VfxToolContract.Success(message, data, new { action });
                 }
 
+                string errorCode = GuessErrorCode(jObject);
+                JToken jDetails = jObject["details"];
                 return VfxToolContract.Error(
-                    GuessErrorCode(jObject),
+                    errorCode,
                     message,
-                    new { action, raw = jObject });
+                    jDetails ?? (object)new { action, raw = jObject });
             }
 
             // Existing code returns anonymous objects. Convert via JObject for consistent mapping.
@@ -36,12 +38,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
             bool resultSuccess = normalized["success"]?.ToObject<bool>() ?? false;
             string resultMessage = normalized["message"]?.ToString() ?? (resultSuccess ? "OK" : "Operation failed");
             JToken resultData = normalized["data"];
+            string resultErrorCode = normalized["error_code"]?.ToString();
+            JToken handlerDetails = normalized["details"];
 
             if (resultData == null)
             {
-                // Preserve extra fields for legacy callsites in details, not top-level.
                 normalized.Remove("success");
                 normalized.Remove("message");
+                normalized.Remove("details");
+                normalized.Remove("error_code");
                 resultData = normalized;
             }
 
@@ -51,9 +56,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
 
             return VfxToolContract.Error(
-                GuessErrorCode(normalized),
+                !string.IsNullOrEmpty(resultErrorCode) ? resultErrorCode : GuessErrorCode(normalized),
                 resultMessage,
-                new { action, raw = normalized });
+                handlerDetails ?? (object)new { action, raw = normalized });
         }
 
         private static string GuessErrorCode(JObject result)
