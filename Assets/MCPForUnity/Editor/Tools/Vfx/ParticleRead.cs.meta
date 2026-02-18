@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: e8870407b211144f6938642b7f26fc4c
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 329908
+  packageName: MCP for Unity | AI Driven Development
+  packageVersion: 9.0.3
+  assetPath: Assets/MCPForUnity/Editor/Tools/Vfx/ParticleRead.cs
+  uploadId: 855486

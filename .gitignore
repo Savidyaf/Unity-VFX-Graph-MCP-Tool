@@ -100,3 +100,5 @@ InitTestScene*.unity*
 
 //macOS
 **/.DS_Store
+//rider
+**/.idea

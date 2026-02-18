@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 2f518a7ba3152499d84e71a4ebbc6a78
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 329908
+  packageName: MCP for Unity | AI Driven Development
+  packageVersion: 9.0.3
+  assetPath: Assets/MCPForUnity/Editor/Tools/Vfx/ManageVfxCommon.cs
+  uploadId: 855486

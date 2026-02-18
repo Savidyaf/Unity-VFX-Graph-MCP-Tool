@@ -22,6 +22,7 @@ jobs:
           testMode: EditMode
           githubToken: ${{ secrets.GITHUB_TOKEN }}
           artifactsPath: artifacts
+          customParameters: -testFilter Pakaya.Mcp.Vfx.Tests.Editor
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
