@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: ed0d81c38be2d4693a2db81ac7dae7d9
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 329908
+  packageName: MCP for Unity | AI Driven Development
+  packageVersion: 9.0.3
+  assetPath: Assets/MCPForUnity/Editor/Tools/Vfx/TrailRead.cs
+  uploadId: 855486

@@ -59,12 +59,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
         private static string GuessErrorCode(JObject result)
         {
             if (result == null) return VfxErrorCodes.UnknownError;
-            if (result["error_code"] != null) return result["error_code"]?.ToString();
+
+            string explicit_code = result["error_code"]?.ToString();
+            if (!string.IsNullOrEmpty(explicit_code)) return explicit_code;
 
             string message = result["message"]?.ToString() ?? string.Empty;
             if (message.IndexOf("required", StringComparison.OrdinalIgnoreCase) >= 0) return VfxErrorCodes.ValidationError;
+            if (message.IndexOf("asset", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                message.IndexOf("not found", StringComparison.OrdinalIgnoreCase) >= 0) return VfxErrorCodes.AssetNotFound;
             if (message.IndexOf("not found", StringComparison.OrdinalIgnoreCase) >= 0) return VfxErrorCodes.NotFound;
-            if (message.IndexOf("asset", StringComparison.OrdinalIgnoreCase) >= 0) return VfxErrorCodes.AssetNotFound;
             if (message.IndexOf("reflection", StringComparison.OrdinalIgnoreCase) >= 0) return VfxErrorCodes.ReflectionError;
             return VfxErrorCodes.UnknownError;
         }

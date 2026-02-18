@@ -29,16 +29,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             // 1. Load Graph (Reflection)
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
-            // 2. Find Node Type based on name (e.g., "VFXNodeAdd")
-            // We search all types that inherit from VFXNode (or just by name if we can't find VFXNode type easily)
-            Type vfxNodeType = GetVFXType("VFXNode"); // Base class
-            
-            Type typeToInstantiate = AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(a => a.GetTypes())
-                .FirstOrDefault(t => t.Name.Equals(nodeType, StringComparison.OrdinalIgnoreCase) 
-                                     && (vfxNodeType == null || vfxNodeType.IsAssignableFrom(t)));
+            Type vfxNodeType = GetVFXType("VFXNode");
+            Type typeToInstantiate = VfxGraphReflectionCache.ResolveType(nodeType, vfxNodeType);
 
             if (typeToInstantiate == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node type '{nodeType}' not found" };
 
@@ -46,7 +40,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             {
                 // 3. Create Instance
                 ScriptableObject instance = ScriptableObject.CreateInstance(typeToInstantiate);
-                if (instance == null) return new { success = false, message = "Failed to create instance" };
+                if (instance == null) return new { success = false, error_code = VfxErrorCodes.InternalException, message = "Failed to create instance" };
                 
                 // 4. Set Position (VFXModel.position is Vector2)
                 if (@params["position"] != null)
@@ -71,8 +65,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 SafeInvalidate(graph, "kStructureChanged");
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, id = instance.GetInstanceID(), message = $"Added {nodeType}" };
             }
@@ -99,7 +92,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
@@ -130,8 +123,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 SafeInvalidate(graph, "kStructureChanged");
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Removed node {nodeTypeName} (id:{nodeId})" };
             }
@@ -159,7 +151,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, nodeId, and position are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
@@ -179,8 +171,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 posProp.SetValue(node, pos);
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Moved {node.GetType().Name} to ({pos.x}, {pos.y})", data = new { x = pos.x, y = pos.y } };
             }
@@ -203,7 +194,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
@@ -216,7 +207,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             {
                 ScriptableObject newNode = ScriptableObject.CreateInstance(sourceNode.GetType());
                 if (newNode == null)
-                    return new { success = false, message = $"Failed to create instance of {sourceNode.GetType().Name}" };
+                    return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Failed to create instance of {sourceNode.GetType().Name}" };
 
                 // Copy position with offset
                 PropertyInfo posProp = sourceNode.GetType().GetProperty("position",
@@ -259,8 +250,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 SafeInvalidate(graph, "kStructureChanged");
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new
                 {
@@ -298,7 +288,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             if (childSlotName == null) childSlotName = "";
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             // Find nodes
             var models = new List<ScriptableObject>();
@@ -314,8 +304,26 @@ namespace MCPForUnity.Editor.Tools.Vfx
             object parentSlot = FindSlot(parentNode, parentSlotName, true); // Output
             object childSlot = FindSlot(childNode, childSlotName, false);   // Input
 
-            if (parentSlot == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Output slot '{parentSlotName}' not found on parent" };
-            if (childSlot == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Input slot '{childSlotName}' not found on child" };
+            if (parentSlot == null)
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.NotFound,
+                    message = $"Output slot '{parentSlotName}' not found on parent",
+                    details = new { availableSlots = CollectSlotInfo(parentNode, true) }
+                };
+            }
+            if (childSlot == null)
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.NotFound,
+                    message = $"Input slot '{childSlotName}' not found on child",
+                    details = new { availableSlots = CollectSlotInfo(childNode, false) }
+                };
+            }
 
             try 
             {
@@ -328,13 +336,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 
                 if (result)
                 {
-                    EditorUtility.SetDirty(resource);
-                    AssetDatabase.SaveAssets();
+                    PersistGraph(resource);
                     return new { success = true, message = $"Connected {parentNode.name}:{parentSlotName} -> {childNode.name}:{childSlotName}" };
                 }
                 else
                 {
-                    return new { success = false, message = "Link failed (type mismatch or circular dependency?)" };
+                    return new { success = false, error_code = VfxErrorCodes.InternalException, message = "Link failed (type mismatch or circular dependency?)" };
                 }
             }
             catch (VfxToolReflectionException ex)
@@ -347,6 +354,166 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
         }
 
+        public static object DisconnectNodes(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            if (string.IsNullOrEmpty(path))
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
+
+            int parentId = @params["parentNodeId"]?.ToObject<int>() ?? (@params["fromNodeId"]?.ToObject<int>() ?? 0);
+            string parentSlotName = @params["parentSlot"]?.ToString() ?? @params["fromSlot"]?.ToString() ?? "";
+            int childId = @params["childNodeId"]?.ToObject<int>() ?? (@params["toNodeId"]?.ToObject<int>() ?? 0);
+            string childSlotName = @params["childSlot"]?.ToString() ?? @params["toSlot"]?.ToString() ?? "";
+
+            if (parentId == 0 || childId == 0)
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Parent and Child Node IDs are required" };
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+
+            var parentNode = models.FirstOrDefault(m => m.GetInstanceID() == parentId);
+            var childNode = models.FirstOrDefault(m => m.GetInstanceID() == childId);
+
+            if (parentNode == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Parent node {parentId} not found" };
+            if (childNode == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Child node {childId} not found" };
+
+            object parentSlot = FindSlot(parentNode, parentSlotName, true);
+            object childSlot = FindSlot(childNode, childSlotName, false);
+
+            if (parentSlot == null)
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Output slot '{parentSlotName}' not found on parent" };
+            if (childSlot == null)
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Input slot '{childSlotName}' not found on child" };
+
+            var errors = new List<string>();
+            bool disconnected = false;
+
+            var unlinkMethods = childSlot.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m => m.Name == "Unlink")
+                .ToArray();
+            foreach (var method in unlinkMethods)
+            {
+                var parms = method.GetParameters();
+                try
+                {
+                    if (parms.Length == 1)
+                    {
+                        method.Invoke(childSlot, new[] { parentSlot });
+                        disconnected = true;
+                        break;
+                    }
+                    if (parms.Length == 2)
+                    {
+                        method.Invoke(childSlot, new object[] { parentSlot, true });
+                        disconnected = true;
+                        break;
+                    }
+                }
+                catch (TargetInvocationException tie)
+                {
+                    errors.Add($"Unlink({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                }
+            }
+
+            if (!disconnected)
+            {
+                var unlinkAllMethods = childSlot.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Where(m => m.Name == "UnlinkAll")
+                    .ToArray();
+                foreach (var method in unlinkAllMethods)
+                {
+                    var parms = method.GetParameters();
+                    try
+                    {
+                        if (parms.Length == 0)
+                            method.Invoke(childSlot, null);
+                        else if (parms.Length == 1)
+                            method.Invoke(childSlot, new object[] { true });
+                        disconnected = true;
+                        break;
+                    }
+                    catch (TargetInvocationException tie)
+                    {
+                        errors.Add($"UnlinkAll({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                    }
+                }
+            }
+
+            if (!disconnected)
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.InternalException,
+                    message = "Could not disconnect slots",
+                    details = new { errors }
+                };
+            }
+
+            VfxGraphPersistenceService.Persist(resource);
+            return new { success = true, message = $"Disconnected {parentNode.name}:{parentSlotName} -> {childNode.name}:{childSlotName}" };
+        }
+
+        public static object GetConnections(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            if (string.IsNullOrEmpty(path))
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+
+            var connections = new List<object>();
+            foreach (var node in models)
+            {
+                if (node == graph) continue;
+                foreach (var input in EnumerateSlots(node, false))
+                {
+                    string inputName = GetSlotName(input);
+                    foreach (var sourceSlot in EnumerateLinkedSourceSlots(input))
+                    {
+                        var sourceNode = GetSlotOwner(sourceSlot);
+                        connections.Add(new
+                        {
+                            fromNodeId = sourceNode != null ? sourceNode.GetInstanceID() : 0,
+                            fromNodeType = sourceNode != null ? sourceNode.GetType().Name : "unknown",
+                            fromSlot = GetSlotName(sourceSlot),
+                            toNodeId = node.GetInstanceID(),
+                            toNodeType = node.GetType().Name,
+                            toSlot = inputName
+                        });
+                    }
+                }
+            }
+
+            return new
+            {
+                success = true,
+                message = $"Found {connections.Count} data connections",
+                data = new { count = connections.Count, connections }
+            };
+        }
+
+        public static object SaveGraph(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            if (string.IsNullOrEmpty(path))
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
+
+            SafeInvalidate(graph, "kStructureChanged");
+            VfxGraphPersistenceService.Persist(resource);
+            return new { success = true, message = $"Saved graph: {path}" };
+        }
+
         public static object SetNodeProperty(JObject @params)
         {
             string path = @params["path"]?.ToString();
@@ -355,24 +522,33 @@ namespace MCPForUnity.Editor.Tools.Vfx
             JToken valueToken = @params["value"];
 
             if (string.IsNullOrEmpty(path) || nodeId == 0 || string.IsNullOrEmpty(propName) || valueToken == null)
-                return new { success = false, message = "Path, NodeId, Property, and Value are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, NodeId, Property, and Value are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-            if (node == null) return new { success = false, message = $"Node {nodeId} not found" };
+            if (node == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
 
             // For property setting, we look for input slots
             object inputSlot = FindSlot(node, propName, false);
-            if (inputSlot == null) return new { success = false, message = $"Input property '{propName}' not found on node" };
+            if (inputSlot == null)
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.NotFound,
+                    message = $"Input property '{propName}' not found on node",
+                    details = new { availableProperties = CollectSlotInfo(node, false) }
+                };
+            }
 
             try 
             {
                 PropertyInfo valueProp = inputSlot.GetType().GetProperty("value", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (valueProp == null) return new { success = false, message = "Value property not found on Slot" };
+                if (valueProp == null) return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "Value property not found on Slot" };
 
                 object valueToSet = null;
                 object currentValue = valueProp.GetValue(inputSlot);
@@ -392,8 +568,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     else if (targetType == typeof(string)) valueToSet = valueToken.ToString();
                     else 
                     {
-                         // Try generic conversion
-                         try { valueToSet = valueToken.ToObject(targetType); } catch {}
+                         try { valueToSet = valueToken.ToObject(targetType); }
+                         catch (Exception convEx) { Debug.LogWarning($"[VFX MCP] Type conversion to {targetType?.Name} failed: {convEx.Message}"); }
                     }
                 }
                 
@@ -401,14 +577,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 valueProp.SetValue(inputSlot, valueToSet);
                 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Set {propName} to {valueToSet}" };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error setting property: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error setting property: {ex.Message}" };
             }
         }
 
@@ -491,6 +666,91 @@ namespace MCPForUnity.Editor.Tools.Vfx
             return null;
         }
 
+        private static IEnumerable<object> EnumerateSlots(ScriptableObject model, bool isOutput)
+        {
+            if (model == null) yield break;
+
+            string propName = isOutput ? "outputSlots" : "inputSlots";
+            PropertyInfo slotsProp = model.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (slotsProp == null) yield break;
+
+            var slots = slotsProp.GetValue(model) as IEnumerable;
+            if (slots == null) yield break;
+
+            foreach (var slot in slots)
+            {
+                if (slot != null) yield return slot;
+            }
+        }
+
+        private static IEnumerable<object> EnumerateLinkedSourceSlots(object inputSlot)
+        {
+            if (inputSlot == null) yield break;
+
+            var linkedField = inputSlot.GetType().GetField("link", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (linkedField == null) yield break;
+
+            object linkedObj = linkedField.GetValue(inputSlot);
+            if (linkedObj == null) yield break;
+
+            if (linkedObj is IEnumerable enumerable)
+            {
+                foreach (var entry in enumerable)
+                {
+                    object slot = ExtractLinkedSlot(entry);
+                    if (slot != null) yield return slot;
+                }
+                yield break;
+            }
+
+            {
+                object slot = ExtractLinkedSlot(linkedObj);
+                if (slot != null) yield return slot;
+            }
+        }
+
+        private static object ExtractLinkedSlot(object linkEntry)
+        {
+            if (linkEntry == null) return null;
+
+            // Direct slot reference
+            if (linkEntry.GetType().Name.Contains("VFXSlot"))
+                return linkEntry;
+
+            var slotField = linkEntry.GetType().GetField("slot", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (slotField != null)
+                return slotField.GetValue(linkEntry);
+
+            var sourceField = linkEntry.GetType().GetField("source", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (sourceField != null)
+                return sourceField.GetValue(linkEntry);
+
+            return null;
+        }
+
+        private static ScriptableObject GetSlotOwner(object slot)
+        {
+            if (slot == null) return null;
+
+            var ownerProp = slot.GetType().GetProperty("owner", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (ownerProp != null)
+                return ownerProp.GetValue(slot) as ScriptableObject;
+
+            var ownerField = slot.GetType().GetField("owner", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (ownerField != null)
+                return ownerField.GetValue(slot) as ScriptableObject;
+
+            return null;
+        }
+
+        private static string GetSlotName(object slot)
+        {
+            if (slot == null) return string.Empty;
+            var nameProp = slot.GetType().GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (nameProp == null) return string.Empty;
+            return nameProp.GetValue(slot)?.ToString() ?? string.Empty;
+        }
+
         private static List<object> CollectSlotInfo(ScriptableObject model, bool isOutput)
         {
             var result = new List<object>();
@@ -535,8 +795,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             resource = null;
             error = null;
 
-            // 1. Get UnityEditor.VFX.VisualEffectResource type
-            var unityEditorVfxModule = System.Linq.Enumerable.FirstOrDefault(System.AppDomain.CurrentDomain.GetAssemblies(), a => a.GetName().Name == "UnityEditor.VFXModule");
+            var unityEditorVfxModule = VfxGraphReflectionCache.GetAssemblyByName("UnityEditor.VFXModule");
             var resourceType = unityEditorVfxModule?.GetType("UnityEditor.VFX.VisualEffectResource");
             
             if (resourceType == null)
@@ -562,8 +821,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                  return null;
             }
 
-            // 3. Get UnityEditor.VFX.VisualEffectResourceExtensions type
-            var vfxGraphEditorAsm = System.Linq.Enumerable.FirstOrDefault(System.AppDomain.CurrentDomain.GetAssemblies(), a => a.GetName().Name == "Unity.VisualEffectGraph.Editor");
+            var vfxGraphEditorAsm = VfxGraphReflectionCache.GetAssemblyByName("Unity.VisualEffectGraph.Editor");
             var extensionsType = vfxGraphEditorAsm?.GetType("UnityEditor.VFX.VisualEffectResourceExtensions");
 
             if (extensionsType == null)
@@ -589,6 +847,40 @@ namespace MCPForUnity.Editor.Tools.Vfx
             return graph;
         }
 
+        private static bool TryLoadGraph(string path, out ScriptableObject graph, out UnityEngine.Object resource, out object errorResult)
+        {
+            graph = GetGraph(path, out resource, out string error);
+            if (graph == null)
+            {
+                errorResult = new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
+                return false;
+            }
+            errorResult = null;
+            return true;
+        }
+
+        private static bool TryLoadNodeById(string path, int nodeId, out ScriptableObject graph, out UnityEngine.Object resource, out ScriptableObject node, out object errorResult)
+        {
+            node = null;
+            if (!TryLoadGraph(path, out graph, out resource, out errorResult))
+                return false;
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+            node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
+            if (node == null)
+            {
+                errorResult = new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
+                return false;
+            }
+            return true;
+        }
+
+        private static void PersistGraph(UnityEngine.Object resource)
+        {
+            VfxGraphPersistenceService.Persist(resource);
+        }
+
         /// <summary>
         /// Returns all nodes in the graph with their instance IDs, types, positions, slot information,
         /// blocks (for contexts), and settings.
@@ -598,10 +890,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             if (string.IsNullOrEmpty(path))
-                return new { success = false, message = "Path is required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
@@ -671,12 +963,17 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     { "id", model.GetInstanceID() },
                     { "type", model.GetType().Name },
-                    { "name", model.name },
+                    { "name", GetNodeDisplayName(model) },
                     { "position", new { x = pos.x, y = pos.y } },
                     { "inputSlots", inputSlots },
                     { "outputSlots", outputSlots },
                     { "isContext", isContext }
                 };
+
+                if (isContext && TryGetContextCapacity(model, out int contextCapacity))
+                {
+                    nodeData["capacity"] = contextCapacity;
+                }
 
                 if (blocks != null)
                     nodeData["blocks"] = blocks;
@@ -792,27 +1089,23 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             Type vfxModelType = GetVFXType("VFXModel");
             if (vfxModelType == null)
-                return new { success = false, message = "Could not find VFXModel base type" };
+                return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "Could not find VFXModel base type" };
 
             var nodeTypes = new List<object>();
-            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
 
-            // Cache category types once (avoid repeated assembly scans)
             Type ctxType = GetVFXType("VFXContext");
             Type blkType = GetVFXType("VFXBlock");
             Type opType = GetVFXType("VFXOperator");
             Type slotType = GetVFXType("VFXSlot");
 
-            foreach (var asm in assemblies)
+            foreach (var asm in VfxGraphReflectionCache.GetAssemblies())
             {
                 string asmName = asm.GetName().Name;
                 if (asmName.IndexOf("VFX", StringComparison.OrdinalIgnoreCase) < 0 &&
                     asmName.IndexOf("VisualEffect", StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
 
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch { continue; }
+                var types = VfxGraphReflectionCache.SafeGetTypes(asm);
 
                 foreach (var t in types)
                 {
@@ -872,7 +1165,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             if (string.IsNullOrEmpty(path))
-                return new { success = false, message = "Path is required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
 
             int fromId = @params["fromContextId"]?.ToObject<int>() ?? 0;
             int toId = @params["toContextId"]?.ToObject<int>() ?? 0;
@@ -880,10 +1173,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int toIndex = @params["toFlowIndex"]?.ToObject<int>() ?? 0;
 
             if (fromId == 0 || toId == 0)
-                return new { success = false, message = "fromContextId and toContextId are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "fromContextId and toContextId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
@@ -891,18 +1184,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
             var fromNode = models.FirstOrDefault(m => m.GetInstanceID() == fromId);
             var toNode = models.FirstOrDefault(m => m.GetInstanceID() == toId);
 
-            if (fromNode == null) return new { success = false, message = $"Source context {fromId} not found" };
-            if (toNode == null) return new { success = false, message = $"Target context {toId} not found" };
+            if (fromNode == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Source context {fromId} not found" };
+            if (toNode == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Target context {toId} not found" };
 
             // Verify both are VFXContext types
             Type vfxContextType = GetVFXType("VFXContext");
             if (vfxContextType == null)
-                return new { success = false, message = "Could not find VFXContext type" };
+                return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "Could not find VFXContext type" };
 
             if (!vfxContextType.IsAssignableFrom(fromNode.GetType()))
-                return new { success = false, message = $"Node {fromId} ({fromNode.GetType().Name}) is not a VFXContext" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = $"Node {fromId} ({fromNode.GetType().Name}) is not a VFXContext" };
             if (!vfxContextType.IsAssignableFrom(toNode.GetType()))
-                return new { success = false, message = $"Node {toId} ({toNode.GetType().Name}) is not a VFXContext" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = $"Node {toId} ({toNode.GetType().Name}) is not a VFXContext" };
 
             try
             {
@@ -919,7 +1212,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
                     if (linkFromMethod == null)
-                        return new { success = false, message = "Neither LinkTo nor LinkFrom found on VFXContext" };
+                        return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "Neither LinkTo nor LinkFrom found on VFXContext" };
 
                     // LinkFrom(VFXContext from, int fromIndex, int toIndex)
                     linkFromMethod.Invoke(toNode, new object[] { fromNode, fromIndex, toIndex });
@@ -930,8 +1223,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     linkToMethod.Invoke(fromNode, new object[] { toNode, fromIndex, toIndex });
                 }
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new
                 {
@@ -983,56 +1275,52 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int index = @params["index"]?.ToObject<int>() ?? -1; // -1 = append
 
             if (string.IsNullOrEmpty(path) || contextId == 0 || string.IsNullOrEmpty(blockType))
-                return new { success = false, message = "Path, contextId, and blockType (or type) are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, contextId, and blockType (or type) are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var contextNode = models.FirstOrDefault(m => m.GetInstanceID() == contextId);
 
-            if (contextNode == null) return new { success = false, message = $"Context node {contextId} not found" };
+            if (contextNode == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Context node {contextId} not found" };
 
             Type vfxContextType = GetVFXType("VFXContext");
             if (vfxContextType == null || !vfxContextType.IsAssignableFrom(contextNode.GetType()))
-                return new { success = false, message = $"Node {contextId} is not a VFXContext" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = $"Node {contextId} is not a VFXContext" };
 
             // Find the block type
             Type vfxBlockBase = GetVFXType("VFXBlock");
             if (vfxBlockBase == null)
-                return new { success = false, message = "Could not find VFXBlock base type" };
+                return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "Could not find VFXBlock base type" };
 
-            Type typeToCreate = AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
-                .FirstOrDefault(t => t.Name.Equals(blockType, StringComparison.OrdinalIgnoreCase)
-                                     && vfxBlockBase.IsAssignableFrom(t)
-                                     && !t.IsAbstract);
+            Type typeToCreate = VfxGraphReflectionCache.ResolveType(blockType, vfxBlockBase);
+            if (typeToCreate != null && typeToCreate.IsAbstract) typeToCreate = null;
 
             if (typeToCreate == null)
-                return new { success = false, message = $"Block type '{blockType}' not found (must be a VFXBlock subclass)" };
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Block type '{blockType}' not found (must be a VFXBlock subclass)" };
 
             try
             {
                 // Create the block instance
                 ScriptableObject blockInstance = ScriptableObject.CreateInstance(typeToCreate);
                 if (blockInstance == null)
-                    return new { success = false, message = $"Failed to create instance of {blockType}" };
+                    return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Failed to create instance of {blockType}" };
 
                 // Add block to context using AddChild
                 MethodInfo addChildMethod = contextNode.GetType().GetMethod("AddChild",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
                 if (addChildMethod == null)
-                    return new { success = false, message = "AddChild method not found on context" };
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "AddChild method not found on context" };
 
                 // Use notify=false to prevent cascade invalidation crash from corrupt parameters
                 addChildMethod.Invoke(contextNode, new object[] { blockInstance, index, false });
 
                 SafeInvalidate(contextNode, "kStructureChanged");
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new
                 {
@@ -1045,11 +1333,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
             catch (TargetInvocationException tie)
             {
                 var inner = tie.InnerException ?? tie;
-                return new { success = false, message = $"Error adding block: {inner.Message}", detail = inner.StackTrace };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error adding block: {inner.Message}", detail = inner.StackTrace };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error adding block: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error adding block: {ex.Message}" };
             }
         }
 
@@ -1062,20 +1350,20 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int blockId = @params["blockId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
 
             if (string.IsNullOrEmpty(path) || blockId == 0)
-                return new { success = false, message = "Path and blockId (or id) are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and blockId (or id) are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var blockNode = models.FirstOrDefault(m => m.GetInstanceID() == blockId);
 
-            if (blockNode == null) return new { success = false, message = $"Block {blockId} not found" };
+            if (blockNode == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Block {blockId} not found" };
 
             Type vfxBlockBase = GetVFXType("VFXBlock");
             if (vfxBlockBase == null || !vfxBlockBase.IsAssignableFrom(blockNode.GetType()))
-                return new { success = false, message = $"Node {blockId} is not a VFXBlock" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = $"Node {blockId} is not a VFXBlock" };
 
             try
             {
@@ -1116,28 +1404,27 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
 
                 if (parentContext == null)
-                    return new { success = false, message = "Could not find parent context for block" };
+                    return new { success = false, error_code = VfxErrorCodes.NotFound, message = "Could not find parent context for block" };
 
                 // RemoveChild(VFXModel model, bool notify)
                 MethodInfo removeMethod = parentContext.GetType().GetMethod("RemoveChild",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
                 if (removeMethod == null)
-                    return new { success = false, message = "RemoveChild method not found on context" };
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "RemoveChild method not found on context" };
 
                 // Use notify=false to prevent cascade invalidation crash from corrupt parameters
                 removeMethod.Invoke(parentContext, new object[] { blockNode, false });
 
                 SafeInvalidate(parentContext, "kStructureChanged");
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Removed block {blockNode.GetType().Name} from {parentContext.GetType().Name}" };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error removing block: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error removing block: {ex.Message}" };
             }
         }
 
@@ -1173,20 +1460,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             Type vfxBlockBase = GetVFXType("VFXBlock");
             if (vfxBlockBase == null)
-                return new { success = false, message = "Could not find VFXBlock base type" };
+                return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "Could not find VFXBlock base type" };
 
             var blockTypes = new List<object>();
 
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var asm in VfxGraphReflectionCache.GetAssemblies())
             {
                 string asmName = asm.GetName().Name;
                 if (asmName.IndexOf("VFX", StringComparison.OrdinalIgnoreCase) < 0 &&
                     asmName.IndexOf("VisualEffect", StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
 
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch { continue; }
+                var types = VfxGraphReflectionCache.SafeGetTypes(asm);
 
                 foreach (var t in types)
                 {
@@ -1252,78 +1537,21 @@ namespace MCPForUnity.Editor.Tools.Vfx
             JToken valueToken = @params["value"];
 
             if (string.IsNullOrEmpty(path) || nodeId == 0 || string.IsNullOrEmpty(settingName) || valueToken == null)
-                return new { success = false, message = "Path, nodeId, settingName (or setting), and value are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, nodeId, settingName (or setting), and value are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-            if (node == null) return new { success = false, message = $"Node {nodeId} not found" };
+            if (node == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
 
             try
             {
-                // Find the setting field via VFXSettingAttribute to get the correct type
-                FieldInfo settingField = null;
-                Type currentType = node.GetType();
-                while (currentType != null && currentType != typeof(ScriptableObject))
-                {
-                    foreach (var field in currentType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                    {
-                        if (field.Name == settingName &&
-                            field.GetCustomAttributes(true).Any(a => a.GetType().Name.Contains("VFXSetting")))
-                        {
-                            settingField = field;
-                            break;
-                        }
-                    }
-                    if (settingField != null) break;
-                    currentType = currentType.BaseType;
-                }
-
-                object convertedValue = null;
-
-                if (settingField != null)
-                {
-                    // We know the exact setting field — convert value to the correct type
-                    Type settingType = settingField.FieldType;
-                    if (settingType.IsEnum)
-                    {
-                        string valStr = valueToken.ToString();
-                        if (int.TryParse(valStr, out int intVal))
-                            convertedValue = Enum.ToObject(settingType, intVal);
-                        else
-                            convertedValue = Enum.Parse(settingType, valStr, true);
-                    }
-                    else if (settingType == typeof(float))
-                        convertedValue = valueToken.ToObject<float>();
-                    else if (settingType == typeof(int))
-                        convertedValue = valueToken.ToObject<int>();
-                    else if (settingType == typeof(bool))
-                        convertedValue = valueToken.ToObject<bool>();
-                    else if (settingType == typeof(string))
-                        convertedValue = valueToken.ToString();
-                    else if (settingType == typeof(uint))
-                        convertedValue = valueToken.ToObject<uint>();
-                    else
-                    {
-                        try { convertedValue = valueToken.ToObject(settingType); }
-                        catch { convertedValue = valueToken.ToString(); }
-                    }
-                }
-                else
-                {
-                    // Fallback: try standard JToken conversions
-                    if (valueToken.Type == JTokenType.Integer)
-                        convertedValue = valueToken.ToObject<int>();
-                    else if (valueToken.Type == JTokenType.Float)
-                        convertedValue = valueToken.ToObject<float>();
-                    else if (valueToken.Type == JTokenType.Boolean)
-                        convertedValue = valueToken.ToObject<bool>();
-                    else
-                        convertedValue = valueToken.ToString();
-                }
+                FieldInfo settingField = FindVfxSettingField(node.GetType(), settingName);
+                object convertedValue = ConvertSettingValue(settingField, valueToken, out object conversionError);
+                if (conversionError != null) return conversionError;
 
                 // Use SetSettingValue — resolve ambiguity by finding the right overload
                 var setMethods = node.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
@@ -1365,57 +1593,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     }
                     else
                     {
-                        return new { success = false, message = $"Could not find SetSettingValue method or field '{settingName}' on {node.GetType().Name}" };
+                        return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Could not find SetSettingValue method or field '{settingName}' on {node.GetType().Name}" };
                     }
                 }
 
-                // Call Invalidate to trigger recompilation of the node
-                var invalidateMethods = node.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    .Where(m => m.Name == "Invalidate")
-                    .ToArray();
+                SafeInvalidate(node, "kSettingChanged");
 
-                if (invalidateMethods.Length > 0)
-                {
-                    try
-                    {
-                        // Invalidate(InvalidationCause cause, VFXModel model) — try with the kSettingChanged enum
-                        var invalidationCauseType = AppDomain.CurrentDomain.GetAssemblies()
-                            .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
-                            .FirstOrDefault(t => t.Name == "InvalidationCause" && t.IsEnum);
-
-                        if (invalidationCauseType != null)
-                        {
-                            object settingChanged = Enum.Parse(invalidationCauseType, "kSettingChanged", true);
-                            // Find the overload that takes (InvalidationCause, VFXModel)
-                            var invalidateMethod = invalidateMethods.FirstOrDefault(m => m.GetParameters().Length >= 1
-                                && m.GetParameters()[0].ParameterType == invalidationCauseType);
-
-                            if (invalidateMethod != null)
-                            {
-                                var parms = invalidateMethod.GetParameters();
-                                if (parms.Length == 1)
-                                    invalidateMethod.Invoke(node, new object[] { settingChanged });
-                                else if (parms.Length >= 2)
-                                    invalidateMethod.Invoke(node, new object[] { settingChanged, node });
-                            }
-                        }
-                    }
-                    catch { /* Not critical if invalidation fails */ }
-                }
-
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Set setting '{settingName}' to {convertedValue} on {node.GetType().Name}" };
             }
             catch (TargetInvocationException tie)
             {
                 var inner = tie.InnerException ?? tie;
-                return new { success = false, message = $"Error setting node setting: {inner.Message}", detail = inner.StackTrace };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error setting node setting: {inner.Message}", detail = inner.StackTrace };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error setting node setting: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error setting node setting: {ex.Message}" };
             }
         }
 
@@ -1429,15 +1624,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int nodeId = @params["nodeId"]?.ToObject<int>() ?? 0;
 
             if (string.IsNullOrEmpty(path) || nodeId == 0)
-                return new { success = false, message = "Path and nodeId are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-            if (node == null) return new { success = false, message = $"Node {nodeId} not found" };
+            if (node == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
 
             try
             {
@@ -1482,9 +1677,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 // Strategy 2: Scan for [VFXSetting] attributed fields in the type hierarchy
                 if (settingsList.Count == 0)
                 {
-                    Type vfxSettingAttrType = AppDomain.CurrentDomain.GetAssemblies()
-                        .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
-                        .FirstOrDefault(t => t.Name == "VFXSettingAttribute" || t.Name == "VFXSetting");
+                    Type vfxSettingAttrType = VfxGraphReflectionCache.ResolveType("VFXSettingAttribute")
+                                             ?? VfxGraphReflectionCache.ResolveType("VFXSetting");
 
                     if (vfxSettingAttrType != null)
                     {
@@ -1580,7 +1774,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error getting settings: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error getting settings: {ex.Message}" };
             }
         }
 
@@ -1650,20 +1844,20 @@ namespace MCPForUnity.Editor.Tools.Vfx
             JToken defaultValue = @params["value"];
 
             if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(propName) || string.IsNullOrEmpty(propTypeName))
-                return new { success = false, message = "Path, name, and type are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, name, and type are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             try
             {
                 Type vfxSlotType = ResolveVFXSlotType(propTypeName);
                 if (vfxSlotType == null)
-                    return new { success = false, message = $"Unknown property type '{propTypeName}'. Supported: float, int, uint, bool, Vector2, Vector3, Vector4, Color, Gradient, AnimationCurve, Texture2D, Texture3D, Cubemap, Mesh, GraphicsBuffer" };
+                    return new { success = false, error_code = VfxErrorCodes.ValidationError, message = $"Unknown property type '{propTypeName}'. Supported: float, int, uint, bool, Vector2, Vector3, Vector4, Color, Gradient, AnimationCurve, Texture2D, Texture3D, Cubemap, Mesh, GraphicsBuffer" };
 
                 Type vfxParameterType = GetVFXType("VFXParameter");
                 if (vfxParameterType == null)
-                    return new { success = false, message = "VFXParameter type not found" };
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "VFXParameter type not found" };
 
                 ScriptableObject param = ScriptableObject.CreateInstance(vfxParameterType);
 
@@ -1717,8 +1911,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     catch { /* Non-critical */ }
                 }
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new
                 {
@@ -1731,11 +1924,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
             {
                 string inner = tie.InnerException?.Message ?? tie.Message;
                 string innerStack = tie.InnerException?.StackTrace ?? "";
-                return new { success = false, message = $"Error adding property: {inner}", stackTrace = innerStack };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error adding property: {inner}", stackTrace = innerStack };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error adding property: {ex.Message}", stackTrace = ex.StackTrace };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error adding property: {ex.Message}", stackTrace = ex.StackTrace };
             }
         }
 
@@ -1746,16 +1939,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             if (string.IsNullOrEmpty(path))
-                return new { success = false, message = "Path is required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             try
             {
                 Type vfxParameterType = GetVFXType("VFXParameter");
                 if (vfxParameterType == null)
-                    return new { success = false, message = "VFXParameter type not found" };
+                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "VFXParameter type not found" };
 
                 var models = new List<ScriptableObject>();
                 GetModelsRecursively(graph, models);
@@ -1812,7 +2005,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error listing properties: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error listing properties: {ex.Message}" };
             }
         }
 
@@ -1826,12 +2019,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string propName = @params["name"]?.ToString();
 
             if (string.IsNullOrEmpty(path))
-                return new { success = false, message = "Path is required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
             if (nodeId == 0 && string.IsNullOrEmpty(propName))
-                return new { success = false, message = "Either nodeId or name is required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Either nodeId or name is required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             try
             {
@@ -1862,7 +2055,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
 
                 if (target == null)
-                    return new { success = false, message = "Property not found" };
+                    return new { success = false, error_code = VfxErrorCodes.NotFound, message = "Property not found" };
 
                 // Use notify=false to prevent cascade invalidation crash from corrupt parameters
                 MethodInfo removeMethod = VfxGraphReflectionCache.GetMethodCached(
@@ -1875,14 +2068,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 SafeInvalidate(graph, "kStructureChanged");
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Removed property '{propName ?? nodeId.ToString()}'" };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error removing property: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error removing property: {ex.Message}" };
             }
         }
 
@@ -1897,12 +2089,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
             JToken valueToken = @params["value"];
 
             if (string.IsNullOrEmpty(path) || valueToken == null)
-                return new { success = false, message = "Path and value are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and value are required" };
             if (nodeId == 0 && string.IsNullOrEmpty(propName))
-                return new { success = false, message = "Either nodeId or name is required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Either nodeId or name is required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             try
             {
@@ -1932,7 +2124,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 }
 
                 if (target == null)
-                    return new { success = false, message = "Property not found" };
+                    return new { success = false, error_code = VfxErrorCodes.NotFound, message = "Property not found" };
 
                 // Get the output slot to determine the type
                 var outputSlots = new List<object>();
@@ -1961,14 +2153,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     }
                 }
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Set default value for '{propName ?? nodeId.ToString()}'" };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error setting property value: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error setting property value: {ex.Message}" };
             }
         }
 
@@ -1986,15 +2177,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string code = @params["code"]?.ToString();
 
             if (string.IsNullOrEmpty(path) || nodeId == 0 || string.IsNullOrEmpty(code))
-                return new { success = false, message = "Path, nodeId, and code are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, nodeId, and code are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-            if (node == null) return new { success = false, message = $"Node {nodeId} not found" };
+            if (node == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
 
             try
             {
@@ -2034,24 +2225,22 @@ namespace MCPForUnity.Editor.Tools.Vfx
                             try
                             {
                                 setMethod.Invoke(node, new object[] { "m_HLSLCode", code });
-                                EditorUtility.SetDirty(resource);
-                                AssetDatabase.SaveAssets();
+                                PersistGraph(resource);
                                 return new { success = true, message = "Set HLSL code via SetSettingValue" };
                             }
-                            catch { }
+                            catch (Exception hlslEx) { Debug.LogWarning($"[VFX MCP] m_HLSLCode set failed: {hlslEx.Message}"); }
 
                             try
                             {
                                 setMethod.Invoke(node, new object[] { "m_BodyContent", code });
-                                EditorUtility.SetDirty(resource);
-                                AssetDatabase.SaveAssets();
+                                PersistGraph(resource);
                                 return new { success = true, message = "Set HLSL code via SetSettingValue (m_BodyContent)" };
                             }
-                            catch { }
+                            catch (Exception hlslEx) { Debug.LogWarning($"[VFX MCP] m_BodyContent set failed: {hlslEx.Message}"); }
                         }
                     }
 
-                    return new { success = false, message = $"No HLSL code field found on {node.GetType().Name}. Is this a Custom HLSL block/operator?" };
+                    return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"No HLSL code field found on {node.GetType().Name}. Is this a Custom HLSL block/operator?" };
                 }
 
                 hlslField.SetValue(node, code);
@@ -2059,14 +2248,13 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 // Invalidate to recompile
                 InvalidateNode(node);
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Set HLSL code on {node.GetType().Name} ({hlslField.Name})", data = new { fieldName = hlslField.Name, codeLength = code.Length } };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error setting HLSL code: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error setting HLSL code: {ex.Message}" };
             }
         }
 
@@ -2163,7 +2351,7 @@ public class {scriptName} : MonoBehaviour
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error creating script: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error creating script: {ex.Message}" };
             }
         }
 
@@ -2185,7 +2373,7 @@ public class {scriptName} : MonoBehaviour
                 return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, sourceContextId, and gpuEventContextId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
@@ -2206,45 +2394,50 @@ public class {scriptName} : MonoBehaviour
                 int outputFlowCount = GetFlowSlotCount(sourceContext, "outputFlowSlot");
                 int inputFlowCount = GetFlowSlotCount(gpuEventContext, "inputFlowSlot");
 
-                // If sourceFlowIndex not specified, try the GPU event slot (usually index 1+)
-                if (sourceFlowIndex < 0)
-                    sourceFlowIndex = outputFlowCount > 1 ? 1 : 0;
+                var candidateFlowIndices = BuildCandidateFlowIndices(sourceFlowIndex, outputFlowCount);
+
+                // Ensure graph state is fully up to date before linking.
+                SafeInvalidate(sourceContext, "kSettingChanged");
+                SafeInvalidate(graph, "kStructureChanged");
+                PersistGraph(resource);
 
                 // Try LinkTo first, then LinkFrom, capturing actual errors
                 var errors = new List<string>();
                 bool linked = false;
+                int linkedFromIndex = -1;
 
                 var linkToMethods = sourceContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     .Where(m => m.Name == "LinkTo")
                     .ToArray();
+                var linkFromMethods = gpuEventContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Where(m => m.Name == "LinkFrom")
+                    .ToArray();
 
-                foreach (var method in linkToMethods)
+                foreach (int candidateIndex in candidateFlowIndices)
                 {
-                    var parms = method.GetParameters();
-                    if (parms.Length >= 1)
+                    foreach (var method in linkToMethods)
                     {
-                        try
+                        var parms = method.GetParameters();
+                        if (parms.Length >= 1)
                         {
-                            if (parms.Length == 3)
-                                method.Invoke(sourceContext, new object[] { gpuEventContext, sourceFlowIndex, 0 });
-                            else if (parms.Length == 1)
-                                method.Invoke(sourceContext, new object[] { gpuEventContext });
-                            linked = true;
-                            break;
-                        }
-                        catch (TargetInvocationException tie)
-                        {
-                            errors.Add($"LinkTo({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                            try
+                            {
+                                if (parms.Length == 3)
+                                    method.Invoke(sourceContext, new object[] { gpuEventContext, candidateIndex, 0 });
+                                else if (parms.Length == 1)
+                                    method.Invoke(sourceContext, new object[] { gpuEventContext });
+                                linked = true;
+                                linkedFromIndex = candidateIndex;
+                                break;
+                            }
+                            catch (TargetInvocationException tie)
+                            {
+                                errors.Add($"flow:{candidateIndex} LinkTo({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                            }
                         }
                     }
-                }
 
-                if (!linked)
-                {
-                    var linkFromMethods = gpuEventContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                        .Where(m => m.Name == "LinkFrom")
-                        .ToArray();
-
+                    if (linked) break;
                     foreach (var method in linkFromMethods)
                     {
                         var parms = method.GetParameters();
@@ -2253,18 +2446,21 @@ public class {scriptName} : MonoBehaviour
                             try
                             {
                                 if (parms.Length == 3)
-                                    method.Invoke(gpuEventContext, new object[] { sourceContext, sourceFlowIndex, 0 });
+                                    method.Invoke(gpuEventContext, new object[] { sourceContext, candidateIndex, 0 });
                                 else if (parms.Length == 1)
                                     method.Invoke(gpuEventContext, new object[] { sourceContext });
                                 linked = true;
+                                linkedFromIndex = candidateIndex;
                                 break;
                             }
                             catch (TargetInvocationException tie)
                             {
-                                errors.Add($"LinkFrom({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
+                                errors.Add($"flow:{candidateIndex} LinkFrom({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
                             }
                         }
                     }
+
+                    if (linked) break;
                 }
 
                 if (!linked)
@@ -2280,7 +2476,7 @@ public class {scriptName} : MonoBehaviour
                             targetType = gpuEventContext.GetType().Name,
                             sourceOutputFlowSlots = outputFlowCount,
                             targetInputFlowSlots = inputFlowCount,
-                            attemptedFlowIndex = sourceFlowIndex,
+                            attemptedFlowIndices = candidateFlowIndices,
                             linkErrors = errors,
                             remediation = "1) Add a TriggerEventAlways or TriggerEventOnDie block to the source context via add_block. " +
                                           "2) Then call link_gpu_event again — the source context will have an additional GPU event flow output. " +
@@ -2289,15 +2485,100 @@ public class {scriptName} : MonoBehaviour
                     };
                 }
 
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
-                return new { success = true, message = $"Linked GPU Event from {sourceContext.GetType().Name}[{sourceContextId}] flow:{sourceFlowIndex} → {gpuEventContext.GetType().Name}[{gpuEventContextId}]" };
+                return new
+                {
+                    success = true,
+                    message = $"Linked GPU Event from {sourceContext.GetType().Name}[{sourceContextId}] flow:{linkedFromIndex} → {gpuEventContext.GetType().Name}[{gpuEventContextId}]",
+                    data = new
+                    {
+                        sourceFlowIndex = linkedFromIndex,
+                        sourceOutputFlowSlots = outputFlowCount,
+                        targetInputFlowSlots = inputFlowCount
+                    }
+                };
             }
             catch (Exception ex)
             {
                 return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error linking GPU Event: {ex.Message}" };
             }
+        }
+
+        /// <summary>
+        /// Sets system particle capacity for a context by walking from VFXContext to underlying VFXData.
+        /// </summary>
+        public static object SetCapacity(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            int contextId = @params["contextId"]?.ToObject<int>() ?? @params["nodeId"]?.ToObject<int>() ?? 0;
+            int capacity = @params["capacity"]?.ToObject<int>() ?? -1;
+
+            if (string.IsNullOrEmpty(path) || contextId == 0 || capacity <= 0)
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.ValidationError,
+                    message = "path, contextId (or nodeId), and positive capacity are required"
+                };
+            }
+
+            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+            var contextNode = models.FirstOrDefault(m => m.GetInstanceID() == contextId);
+            if (contextNode == null)
+            {
+                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Context {contextId} not found" };
+            }
+
+            if (!TryGetContextData(contextNode, out object contextData))
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.NotFound,
+                    message = "Could not resolve VFXData for context",
+                    details = new { contextType = contextNode.GetType().Name, contextId }
+                };
+            }
+
+            if (!TrySetCapacityOnData(contextData, capacity, out int previousCapacity, out string appliedVia))
+            {
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.ValidationError,
+                    message = "Could not set capacity on context data",
+                    details = new
+                    {
+                        contextType = contextNode.GetType().Name,
+                        dataType = contextData.GetType().Name,
+                        expected = "capacity property or m_Capacity field"
+                    }
+                };
+            }
+
+            SafeInvalidate(contextNode, "kSettingChanged");
+            SafeInvalidate(graph, "kStructureChanged");
+            PersistGraph(resource);
+
+            return new
+            {
+                success = true,
+                message = $"Set capacity to {capacity} on {contextNode.GetType().Name}[{contextId}]",
+                data = new
+                {
+                    contextId,
+                    contextType = contextNode.GetType().Name,
+                    previousCapacity,
+                    capacity,
+                    appliedVia
+                }
+            };
         }
 
         /// <summary>
@@ -2326,6 +2607,21 @@ public class {scriptName} : MonoBehaviour
             return -1;
         }
 
+        private static List<int> BuildCandidateFlowIndices(int requestedIndex, int outputFlowCount)
+        {
+            if (requestedIndex >= 0)
+                return new List<int> { requestedIndex };
+
+            var indices = new List<int>();
+            if (outputFlowCount <= 0)
+                return new List<int> { 0 };
+
+            // Prefer event-like non-zero slots first, then fallback to all available.
+            for (int i = 1; i < outputFlowCount; i++) indices.Add(i);
+            if (!indices.Contains(0)) indices.Add(0);
+            return indices;
+        }
+
         /// <summary>
         /// Sets the simulation space on a context or block (Local vs World).
         /// This is critical for controlling particle simulation behavior.
@@ -2337,15 +2633,15 @@ public class {scriptName} : MonoBehaviour
             string space = @params["space"]?.ToString(); // "Local" or "World"
 
             if (string.IsNullOrEmpty(path) || nodeId == 0 || string.IsNullOrEmpty(space))
-                return new { success = false, message = "Path, nodeId, and space (Local/World) are required" };
+                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, nodeId, and space (Local/World) are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
+            if (graph == null) return new { success = false, error_code = VfxErrorCodes.AssetNotFound, message = error ?? "Could not load graph" };
 
             var models = new List<ScriptableObject>();
             GetModelsRecursively(graph, models);
             var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-            if (node == null) return new { success = false, message = $"Node {nodeId} not found" };
+            if (node == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
 
             try
             {
@@ -2356,18 +2652,8 @@ public class {scriptName} : MonoBehaviour
                 string[] spaceSettingNames = new[] { "space", "spaceMode", "attributeSpace", "m_Space" };
                 bool spaceSet = false;
 
-                // Find the correct space enum type
-                var vfxCoordinateSpaceType = AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
-                    .FirstOrDefault(t => t.Name == "VFXCoordinateSpace" && t.IsEnum);
-
-                // Also try VFXSpace
-                if (vfxCoordinateSpaceType == null)
-                {
-                    vfxCoordinateSpaceType = AppDomain.CurrentDomain.GetAssemblies()
-                        .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
-                        .FirstOrDefault(t => t.Name == "VFXSpace" && t.IsEnum);
-                }
+                var vfxCoordinateSpaceType = VfxGraphReflectionCache.ResolveEnumType("VFXCoordinateSpace")
+                                            ?? VfxGraphReflectionCache.ResolveEnumType("VFXSpace");
 
                 foreach (var settingName in spaceSettingNames)
                 {
@@ -2421,7 +2707,7 @@ public class {scriptName} : MonoBehaviour
                                     spaceSet = true;
                                     break;
                                 }
-                                catch { }
+                                catch (Exception spaceEx) { Debug.LogWarning($"[VFX MCP] SetSettingValue('{settingName}') failed: {spaceEx.Message}"); }
                             }
                         }
 
@@ -2498,7 +2784,7 @@ public class {scriptName} : MonoBehaviour
                                         spaceProp.SetValue(slot, spaceVal);
                                         spaceSet = true;
                                     }
-                                    catch { }
+                                    catch (Exception slotEx) { Debug.LogWarning($"[VFX MCP] Slot space set failed: {slotEx.Message}"); }
                                 }
                             }
                         }
@@ -2506,17 +2792,16 @@ public class {scriptName} : MonoBehaviour
                 }
 
                 if (!spaceSet)
-                    return new { success = false, message = $"Could not set space on {node.GetType().Name}. No space-related setting or property found." };
+                    return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Could not set space on {node.GetType().Name}. No space-related setting or property found." };
 
                 InvalidateNode(node);
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
+                PersistGraph(resource);
 
                 return new { success = true, message = $"Set space to '{space}' on {node.GetType().Name}" };
             }
             catch (Exception ex)
             {
-                return new { success = false, message = $"Error setting space: {ex.Message}" };
+                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error setting space: {ex.Message}" };
             }
         }
 
@@ -2633,6 +2918,60 @@ public class {scriptName} : MonoBehaviour
             SafeInvalidate(node, "kSettingChanged");
         }
 
+        private static FieldInfo FindVfxSettingField(Type nodeType, string settingName)
+        {
+            Type current = nodeType;
+            while (current != null && current != typeof(ScriptableObject))
+            {
+                foreach (var field in current.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (field.Name == settingName &&
+                        field.GetCustomAttributes(true).Any(a => a.GetType().Name.Contains("VFXSetting")))
+                        return field;
+                }
+                current = current.BaseType;
+            }
+            return null;
+        }
+
+        private static object ConvertSettingValue(FieldInfo settingField, JToken valueToken, out object errorResult)
+        {
+            errorResult = null;
+            if (settingField == null)
+            {
+                if (valueToken.Type == JTokenType.Integer) return valueToken.ToObject<int>();
+                if (valueToken.Type == JTokenType.Float) return valueToken.ToObject<float>();
+                if (valueToken.Type == JTokenType.Boolean) return valueToken.ToObject<bool>();
+                return valueToken.ToString();
+            }
+
+            Type settingType = settingField.FieldType;
+            if (settingType.IsEnum)
+            {
+                string valStr = valueToken.ToString();
+                return int.TryParse(valStr, out int intVal)
+                    ? Enum.ToObject(settingType, intVal)
+                    : Enum.Parse(settingType, valStr, true);
+            }
+            if (settingType == typeof(float)) return valueToken.ToObject<float>();
+            if (settingType == typeof(int)) return valueToken.ToObject<int>();
+            if (settingType == typeof(bool)) return valueToken.ToObject<bool>();
+            if (settingType == typeof(string)) return valueToken.ToString();
+            if (settingType == typeof(uint)) return valueToken.ToObject<uint>();
+            if (settingType.Name == "SerializableType")
+            {
+                string requestedType = valueToken.Type == JTokenType.Object
+                    ? valueToken["typeName"]?.ToString() ?? valueToken["type"]?.ToString()
+                    : valueToken.ToString();
+                var result = ConvertToSerializableType(settingType, requestedType);
+                if (result == null)
+                    errorResult = new { success = false, error_code = VfxErrorCodes.ValidationError, message = $"Could not resolve SerializableType from '{requestedType}'" };
+                return result;
+            }
+            try { return valueToken.ToObject(settingType); }
+            catch { return valueToken.ToString(); }
+        }
+
         /// <summary>
         /// Safely invokes Invalidate on a VFX model (node, context, or graph) with the given cause.
         /// Wrapped in try/catch because invalidation can crash if any VFXParameter in the graph
@@ -2642,40 +2981,178 @@ public class {scriptName} : MonoBehaviour
         private static void SafeInvalidate(ScriptableObject model, string causeName)
         {
             if (model == null) return;
+            VfxGraphPersistenceService.TryInvalidate(model, causeName);
+        }
+
+        private static string GetNodeDisplayName(ScriptableObject model)
+        {
+            if (model == null) return string.Empty;
+
+            if (model.GetType().Name.IndexOf("VFXParameter", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                try
+                {
+                    var so = new SerializedObject(model);
+                    var exposedNameProp = so.FindProperty("m_ExposedName");
+                    if (exposedNameProp != null && !string.IsNullOrWhiteSpace(exposedNameProp.stringValue))
+                        return exposedNameProp.stringValue;
+                }
+                catch
+                {
+                    // Keep default fallback below.
+                }
+            }
+
+            return model.name;
+        }
+
+        private static object ConvertToSerializableType(Type serializableTypeType, string requestedTypeName)
+        {
+            if (serializableTypeType == null || string.IsNullOrWhiteSpace(requestedTypeName))
+                return null;
+
+            Type resolvedType = ResolveRuntimeTypeByName(requestedTypeName);
+            if (resolvedType == null)
+                return null;
+
+            // Common constructor signature: SerializableType(Type type)
+            ConstructorInfo ctor = serializableTypeType.GetConstructor(new[] { typeof(Type) });
+            if (ctor != null)
+                return ctor.Invoke(new object[] { resolvedType });
+
+            object instance = Activator.CreateInstance(serializableTypeType);
+            if (instance == null) return null;
+
+            // Fallback to internal members used by some Unity versions.
+            var typeField = serializableTypeType.GetField("m_Type", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (typeField != null)
+            {
+                typeField.SetValue(instance, resolvedType);
+                return instance;
+            }
+
+            var typeProp = serializableTypeType.GetProperty("type", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (typeProp != null && typeProp.CanWrite)
+            {
+                typeProp.SetValue(instance, resolvedType);
+                return instance;
+            }
+
+            return null;
+        }
+
+        private static Type ResolveRuntimeTypeByName(string requestedTypeName)
+        {
+            Type resolved = Type.GetType(requestedTypeName, false);
+            if (resolved != null) return resolved;
+
+            return VfxGraphReflectionCache.ResolveType(requestedTypeName, caseInsensitive: false);
+        }
+
+        private static bool TryGetContextData(ScriptableObject contextNode, out object contextData)
+        {
+            contextData = null;
+            if (contextNode == null) return false;
 
             try
             {
-                var invalidationCauseType = AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
-                    .FirstOrDefault(t => t.Name == "InvalidationCause" && t.IsEnum);
-
-                if (invalidationCauseType == null) return;
-
-                object cause;
-                try { cause = Enum.Parse(invalidationCauseType, causeName, true); }
-                catch { return; }
-
-                var invalidateMethods = model.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    .Where(m => m.Name == "Invalidate")
-                    .ToArray();
-
-                var invalidateMethod = invalidateMethods.FirstOrDefault(m =>
-                    m.GetParameters().Length >= 1 && m.GetParameters()[0].ParameterType == invalidationCauseType);
-
-                if (invalidateMethod != null)
-                {
-                    var parms = invalidateMethod.GetParameters();
-                    if (parms.Length == 1)
-                        invalidateMethod.Invoke(model, new object[] { cause });
-                    else if (parms.Length >= 2)
-                        invalidateMethod.Invoke(model, new object[] { cause, model });
-                }
+                var dataProp = contextNode.GetType().GetProperty("data", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (dataProp != null)
+                    contextData = dataProp.GetValue(contextNode);
             }
             catch
             {
-                // Invalidation failure is non-fatal for structural mutations.
-                // The actual AddChild/RemoveChild already succeeded before this point.
+                contextData = null;
             }
+
+            if (contextData != null) return true;
+
+            try
+            {
+                var dataField = contextNode.GetType().GetField("m_Data", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (dataField != null)
+                    contextData = dataField.GetValue(contextNode);
+            }
+            catch
+            {
+                contextData = null;
+            }
+
+            return contextData != null;
+        }
+
+        private static bool TrySetCapacityOnData(object contextData, int capacity, out int previousCapacity, out string appliedVia)
+        {
+            previousCapacity = -1;
+            appliedVia = null;
+            if (contextData == null) return false;
+
+            Type dataType = contextData.GetType();
+
+            var capProp = dataType.GetProperty("capacity", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (capProp != null && capProp.CanWrite && capProp.PropertyType == typeof(uint))
+            {
+                var current = capProp.GetValue(contextData);
+                previousCapacity = current is uint prev ? (int)prev : previousCapacity;
+                capProp.SetValue(contextData, (uint)capacity);
+                appliedVia = "property:capacity(uint)";
+                return true;
+            }
+            if (capProp != null && capProp.CanWrite && capProp.PropertyType == typeof(int))
+            {
+                var current = capProp.GetValue(contextData);
+                previousCapacity = current is int prev ? prev : previousCapacity;
+                capProp.SetValue(contextData, capacity);
+                appliedVia = "property:capacity(int)";
+                return true;
+            }
+
+            var mCapacityField = dataType.GetField("m_Capacity", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (mCapacityField != null && mCapacityField.FieldType == typeof(uint))
+            {
+                var current = mCapacityField.GetValue(contextData);
+                previousCapacity = current is uint prev ? (int)prev : previousCapacity;
+                mCapacityField.SetValue(contextData, (uint)capacity);
+                appliedVia = "field:m_Capacity(uint)";
+                return true;
+            }
+            if (mCapacityField != null && mCapacityField.FieldType == typeof(int))
+            {
+                var current = mCapacityField.GetValue(contextData);
+                previousCapacity = current is int prev ? prev : previousCapacity;
+                mCapacityField.SetValue(contextData, capacity);
+                appliedVia = "field:m_Capacity(int)";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetContextCapacity(ScriptableObject contextNode, out int capacity)
+        {
+            capacity = 0;
+            if (!TryGetContextData(contextNode, out object contextData))
+                return false;
+
+            Type dataType = contextData.GetType();
+
+            var capProp = dataType.GetProperty("capacity", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (capProp != null)
+            {
+                var value = capProp.GetValue(contextData);
+                if (value is uint asUInt) { capacity = (int)asUInt; return true; }
+                if (value is int asInt) { capacity = asInt; return true; }
+            }
+
+            var mCapacityField = dataType.GetField("m_Capacity", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (mCapacityField != null)
+            {
+                var value = mCapacityField.GetValue(contextData);
+                if (value is uint asUInt) { capacity = (int)asUInt; return true; }
+                if (value is int asInt) { capacity = asInt; return true; }
+            }
+
+            return false;
         }
     }
 }

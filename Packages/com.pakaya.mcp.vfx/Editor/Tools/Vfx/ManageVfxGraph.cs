@@ -1,3 +1,4 @@
+using System;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
 
@@ -36,9 +37,19 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     });
             }
 
-            if (VfxGraphActionRouter.TryHandle(normalizedAction, @params, out object result))
+            try
             {
-                return result;
+                if (VfxGraphActionRouter.TryHandle(normalizedAction, @params, out object result))
+                {
+                    return result;
+                }
+            }
+            catch (Exception ex)
+            {
+                return VfxToolContract.Error(
+                    VfxErrorCodes.InternalException,
+                    $"Action '{normalizedAction}' failed: {ex.Message}",
+                    new { action = normalizedAction, exception_type = ex.GetType().Name });
             }
 
             return VfxToolContract.Error(

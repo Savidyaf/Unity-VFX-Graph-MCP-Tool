@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MCPForUnity.Editor.Tools.Vfx
 {
@@ -49,24 +50,21 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
     internal static class VfxActions
     {
-        internal static readonly string[] GraphActions = new[]
+        private static readonly HashSet<string> GraphActionSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            // Introspection
             "get_graph_info",
-            // Node CRUD
             "add_node", "remove_node", "move_node", "duplicate_node",
-            "connect_nodes", "set_node_property", "set_node_setting", "get_node_settings", "list_node_types",
-            // Context flow & blocks
+            "connect_nodes", "disconnect_nodes", "get_connections", "set_node_property", "set_node_setting", "get_node_settings", "list_node_types",
             "link_contexts", "add_block", "remove_block", "list_block_types",
-            // Blackboard properties
             "add_property", "list_properties", "remove_property", "set_property_value",
-            // HLSL & buffer
             "set_hlsl_code", "create_buffer_helper",
-            // GPU events & space
-            "link_gpu_event", "set_space",
-            // Asset lifecycle
-            "create_asset", "list_assets", "list_templates", "assign_asset"
+            "link_gpu_event", "set_capacity", "set_space",
+            "create_asset", "list_assets", "list_templates", "assign_asset", "save_graph"
         };
+
+        internal static readonly string[] GraphActions = GraphActionSet.ToArray();
+
+        internal static bool IsKnownAction(string action) => GraphActionSet.Contains(action);
 
         internal static readonly IDictionary<string, string> GraphAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {

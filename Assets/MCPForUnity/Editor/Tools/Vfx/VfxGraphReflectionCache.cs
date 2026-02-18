@@ -44,13 +44,69 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         internal static MethodInfo GetMethodCached(Type ownerType, string methodName, BindingFlags flags)
         {
+            return GetMethodCached(ownerType, methodName, flags, null);
+        }
+
+        internal static MethodInfo GetMethodCached(Type ownerType, string methodName, BindingFlags flags, params Type[] parameterTypes)
+        {
             if (ownerType == null || string.IsNullOrWhiteSpace(methodName)) return null;
-            string key = ownerType.FullName + "::" + methodName + "::" + (int)flags;
+            string suffix = parameterTypes == null
+                ? "any"
+                : string.Join(",", parameterTypes.Select(t => t == null ? "*" : t.FullName));
+            string key = ownerType.FullName + "::" + methodName + "::" + (int)flags + "::" + suffix;
             if (MethodBySignature.TryGetValue(key, out var cachedMethod)) return cachedMethod;
 
-            var method = ownerType.GetMethod(methodName, flags);
+            MethodInfo method;
+            try
+            {
+                method = parameterTypes == null
+                    ? ownerType.GetMethod(methodName, flags)
+                    : ownerType.GetMethod(methodName, flags, null, parameterTypes, null);
+            }
+            catch (AmbiguousMatchException)
+            {
+                method = ResolveBestMatch(ownerType, methodName, flags, parameterTypes);
+            }
+
+            if (method == null && parameterTypes != null)
+            {
+                method = ResolveBestMatch(ownerType, methodName, flags, parameterTypes);
+            }
+
             MethodBySignature[key] = method;
             return method;
+        }
+
+        private static MethodInfo ResolveBestMatch(Type ownerType, string methodName, BindingFlags flags, Type[] parameterTypes)
+        {
+            var methods = ownerType.GetMethods(flags).Where(m => m.Name == methodName);
+            if (parameterTypes == null || parameterTypes.Length == 0)
+            {
+                return methods.OrderBy(m => m.GetParameters().Length).FirstOrDefault();
+            }
+
+            foreach (var candidate in methods)
+            {
+                var parms = candidate.GetParameters();
+                if (parms.Length != parameterTypes.Length) continue;
+
+                bool match = true;
+                for (int i = 0; i < parms.Length; i++)
+                {
+                    Type expected = parameterTypes[i];
+                    if (expected == null) continue;
+                    if (!parms[i].ParameterType.IsAssignableFrom(expected) &&
+                        parms[i].ParameterType != expected)
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match) return candidate;
+            }
+
+            return null;
         }
     }
 }

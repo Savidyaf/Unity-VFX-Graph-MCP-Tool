@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 24c7da22ba5ea4a1c8db00ea8be7d488
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 329908
+  packageName: MCP for Unity | AI Driven Development
+  packageVersion: 9.0.3
+  assetPath: Assets/MCPForUnity/Editor/Tools/Vfx/ParticleWrite.cs
+  uploadId: 855486
