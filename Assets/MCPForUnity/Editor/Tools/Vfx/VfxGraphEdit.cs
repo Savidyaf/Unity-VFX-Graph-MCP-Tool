@@ -64,13 +64,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 MethodInfo addMethod = VfxGraphReflectionCache.GetMethodCached(graph.GetType(), "AddChild", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 if (addMethod == null) throw new VfxToolReflectionException("AddChild method not found on Graph");
 
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters.
-                // VFXModel.AddChild inserts into m_Children before Invalidate, so with notify=true
-                // the node gets added but any exception during invalidation reports false failure.
-                addMethod.Invoke(graph, new object[] { instance, -1, false });
-
-                SafeInvalidate(graph, "kStructureChanged");
-
+                // Pass -1 for index (append) and true for notify
+                addMethod.Invoke(graph, new object[] { instance, -1, true });
+                
                 EditorUtility.SetDirty(resource);
                 AssetDatabase.SaveAssets();
 
@@ -86,210 +82,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
         }
 
-        /// <summary>
-        /// Removes a node (operator, context, or parameter) from the VFX Graph by instance ID.
-        /// Blocks are redirected to RemoveBlock. Contexts with active flow links return a warning.
-        /// </summary>
-        public static object RemoveNode(JObject @params)
-        {
-            string path = @params["path"]?.ToString();
-            int nodeId = @params["nodeId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
-
-            if (string.IsNullOrEmpty(path) || nodeId == 0)
-                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
-
-            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
-
-            var models = new List<ScriptableObject>();
-            GetModelsRecursively(graph, models);
-            var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-
-            if (node == null)
-                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
-
-            // If it's a block, redirect to RemoveBlock
-            Type vfxBlockBase = GetVFXType("VFXBlock");
-            if (vfxBlockBase != null && vfxBlockBase.IsAssignableFrom(node.GetType()))
-            {
-                return RemoveBlock(new JObject { ["path"] = path, ["blockId"] = nodeId });
-            }
-
-            try
-            {
-                string nodeTypeName = node.GetType().Name;
-
-                MethodInfo removeMethod = graph.GetType().GetMethod("RemoveChild",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                if (removeMethod == null)
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "RemoveChild method not found on graph" };
-
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters
-                removeMethod.Invoke(graph, new object[] { node, false });
-
-                SafeInvalidate(graph, "kStructureChanged");
-
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
-
-                return new { success = true, message = $"Removed node {nodeTypeName} (id:{nodeId})" };
-            }
-            catch (TargetInvocationException tie)
-            {
-                var inner = tie.InnerException ?? tie;
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error removing node: {inner.Message}", detail = inner.StackTrace };
-            }
-            catch (Exception ex)
-            {
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error removing node: {ex.Message}" };
-            }
-        }
-
-        /// <summary>
-        /// Moves a node to a new position in the VFX Graph editor canvas.
-        /// </summary>
-        public static object MoveNode(JObject @params)
-        {
-            string path = @params["path"]?.ToString();
-            int nodeId = @params["nodeId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
-            JToken positionToken = @params["position"];
-
-            if (string.IsNullOrEmpty(path) || nodeId == 0 || positionToken == null)
-                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, nodeId, and position are required" };
-
-            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
-
-            var models = new List<ScriptableObject>();
-            GetModelsRecursively(graph, models);
-            var node = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-
-            if (node == null)
-                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
-
-            try
-            {
-                var pos = ManageVfxCommon.ParseVec2(positionToken);
-                PropertyInfo posProp = node.GetType().GetProperty("position",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                if (posProp == null)
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "position property not found on node" };
-
-                posProp.SetValue(node, pos);
-
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
-
-                return new { success = true, message = $"Moved {node.GetType().Name} to ({pos.x}, {pos.y})", data = new { x = pos.x, y = pos.y } };
-            }
-            catch (Exception ex)
-            {
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error moving node: {ex.Message}" };
-            }
-        }
-
-        /// <summary>
-        /// Duplicates a node in the VFX Graph, copying its type, position (with offset), and settings.
-        /// Connections are NOT copied — the caller must reconnect.
-        /// </summary>
-        public static object DuplicateNode(JObject @params)
-        {
-            string path = @params["path"]?.ToString();
-            int nodeId = @params["nodeId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
-
-            if (string.IsNullOrEmpty(path) || nodeId == 0)
-                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path and nodeId are required" };
-
-            ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
-            if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
-
-            var models = new List<ScriptableObject>();
-            GetModelsRecursively(graph, models);
-            var sourceNode = models.FirstOrDefault(m => m.GetInstanceID() == nodeId);
-
-            if (sourceNode == null)
-                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node {nodeId} not found" };
-
-            try
-            {
-                ScriptableObject newNode = ScriptableObject.CreateInstance(sourceNode.GetType());
-                if (newNode == null)
-                    return new { success = false, message = $"Failed to create instance of {sourceNode.GetType().Name}" };
-
-                // Copy position with offset
-                PropertyInfo posProp = sourceNode.GetType().GetProperty("position",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (posProp != null)
-                {
-                    try
-                    {
-                        Vector2 srcPos = (Vector2)posProp.GetValue(sourceNode);
-                        posProp.SetValue(newNode, srcPos + new Vector2(50, 50));
-                    }
-                    catch { }
-                }
-
-                // Copy VFXSetting-attributed fields
-                Type currentType = sourceNode.GetType();
-                while (currentType != null && currentType != typeof(ScriptableObject))
-                {
-                    foreach (var field in currentType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-                    {
-                        bool hasSettingAttr = field.GetCustomAttributes(true)
-                            .Any(a => a.GetType().Name.Contains("VFXSetting"));
-                        if (hasSettingAttr)
-                        {
-                            try { field.SetValue(newNode, field.GetValue(sourceNode)); }
-                            catch { }
-                        }
-                    }
-                    currentType = currentType.BaseType;
-                }
-
-                // Add to graph
-                MethodInfo addMethod = VfxGraphReflectionCache.GetMethodCached(
-                    graph.GetType(), "AddChild", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (addMethod == null)
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "AddChild method not found on graph" };
-
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters
-                addMethod.Invoke(graph, new object[] { newNode, -1, false });
-
-                SafeInvalidate(graph, "kStructureChanged");
-
-                EditorUtility.SetDirty(resource);
-                AssetDatabase.SaveAssets();
-
-                return new
-                {
-                    success = true,
-                    id = newNode.GetInstanceID(),
-                    message = $"Duplicated {sourceNode.GetType().Name} (source:{nodeId} → new:{newNode.GetInstanceID()})",
-                    data = new { sourceId = nodeId, newId = newNode.GetInstanceID(), type = sourceNode.GetType().Name }
-                };
-            }
-            catch (TargetInvocationException tie)
-            {
-                var inner = tie.InnerException ?? tie;
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error duplicating node: {inner.Message}" };
-            }
-            catch (Exception ex)
-            {
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error duplicating node: {ex.Message}" };
-            }
-        }
-
         public static object ConnectNodes(JObject @params)
         {
             string path = @params["path"]?.ToString();
             if (string.IsNullOrEmpty(path)) return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path is required" };
 
-            int parentId = @params["parentNodeId"]?.ToObject<int>() ?? (@params["fromNodeId"]?.ToObject<int>() ?? 0);
-            string parentSlotName = @params["parentSlot"]?.ToString() ?? @params["fromSlot"]?.ToString();
-            int childId = @params["childNodeId"]?.ToObject<int>() ?? (@params["toNodeId"]?.ToObject<int>() ?? 0);
-            string childSlotName = @params["childSlot"]?.ToString() ?? @params["toSlot"]?.ToString();
+            int parentId = @params["parentNodeId"]?.ToObject<int>() ?? 0;
+            string parentSlotName = @params["parentSlot"]?.ToString();
+            int childId = @params["childNodeId"]?.ToObject<int>() ?? 0;
+            string childSlotName = @params["childSlot"]?.ToString();
 
             if (parentId == 0 || childId == 0) return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Parent and Child Node IDs are required" };
             // Allow empty slot names (operators sometimes have empty output slot names)
@@ -650,8 +451,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                                 type = child.GetType().Name,
                                 index = blockIdx,
                                 inputSlots = blockInputSlots,
-                                outputSlots = blockOutputSlots,
-                                hint = "This block's id can be used with set_node_property, get_node_settings, and set_node_setting."
+                                outputSlots = blockOutputSlots
                             });
                             blockIdx++;
                         }
@@ -942,30 +742,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
             catch (TargetInvocationException tie)
             {
                 var inner = tie.InnerException ?? tie;
-                int srcFlowCount = GetFlowSlotCount(fromNode, "outputFlowSlot");
-                int tgtFlowCount = GetFlowSlotCount(toNode, "inputFlowSlot");
-                return new
-                {
-                    success = false,
-                    error_code = VfxErrorCodes.InternalException,
-                    message = $"Error linking contexts: {inner.Message}",
-                    details = new
-                    {
-                        sourceType = fromNode.GetType().Name,
-                        targetType = toNode.GetType().Name,
-                        sourceOutputFlowSlots = srcFlowCount,
-                        targetInputFlowSlots = tgtFlowCount,
-                        requestedFromFlowIndex = fromIndex,
-                        requestedToFlowIndex = toIndex,
-                        remediation = "Ensure the source context type can flow to the target type. " +
-                                      "Standard flow: Spawner → Initialize → Update → Output. " +
-                                      "For GPU Events, use link_gpu_event or add a TriggerEvent block first."
-                    }
-                };
+                return new { success = false, message = $"Error linking contexts: {inner.Message}", detail = inner.StackTrace };
             }
             catch (Exception ex)
             {
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error linking contexts: {ex.Message}" };
+                return new { success = false, message = $"Error linking contexts: {ex.Message}" };
             }
         }
 
@@ -979,11 +760,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             int contextId = @params["contextId"]?.ToObject<int>() ?? 0;
-            string blockType = @params["blockType"]?.ToString() ?? @params["type"]?.ToString();
+            string blockType = @params["blockType"]?.ToString();
             int index = @params["index"]?.ToObject<int>() ?? -1; // -1 = append
 
             if (string.IsNullOrEmpty(path) || contextId == 0 || string.IsNullOrEmpty(blockType))
-                return new { success = false, message = "Path, contextId, and blockType (or type) are required" };
+                return new { success = false, message = "Path, contextId, and blockType are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -1026,10 +807,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 if (addChildMethod == null)
                     return new { success = false, message = "AddChild method not found on context" };
 
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters
-                addChildMethod.Invoke(contextNode, new object[] { blockInstance, index, false });
-
-                SafeInvalidate(contextNode, "kStructureChanged");
+                addChildMethod.Invoke(contextNode, new object[] { blockInstance, index, true });
 
                 EditorUtility.SetDirty(resource);
                 AssetDatabase.SaveAssets();
@@ -1059,10 +837,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object RemoveBlock(JObject @params)
         {
             string path = @params["path"]?.ToString();
-            int blockId = @params["blockId"]?.ToObject<int>() ?? (@params["id"]?.ToObject<int>() ?? 0);
+            int blockId = @params["blockId"]?.ToObject<int>() ?? 0;
 
             if (string.IsNullOrEmpty(path) || blockId == 0)
-                return new { success = false, message = "Path and blockId (or id) are required" };
+                return new { success = false, message = "Path and blockId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -1125,10 +903,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 if (removeMethod == null)
                     return new { success = false, message = "RemoveChild method not found on context" };
 
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters
-                removeMethod.Invoke(parentContext, new object[] { blockNode, false });
-
-                SafeInvalidate(parentContext, "kStructureChanged");
+                removeMethod.Invoke(parentContext, new object[] { blockNode, true });
 
                 EditorUtility.SetDirty(resource);
                 AssetDatabase.SaveAssets();
@@ -1248,11 +1023,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             string path = @params["path"]?.ToString();
             int nodeId = @params["nodeId"]?.ToObject<int>() ?? 0;
-            string settingName = @params["settingName"]?.ToString() ?? @params["setting"]?.ToString();
+            string settingName = @params["settingName"]?.ToString();
             JToken valueToken = @params["value"];
 
             if (string.IsNullOrEmpty(path) || nodeId == 0 || string.IsNullOrEmpty(settingName) || valueToken == null)
-                return new { success = false, message = "Path, nodeId, settingName (or setting), and value are required" };
+                return new { success = false, message = "Path, nodeId, settingName, and value are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -1336,20 +1111,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     var parms = setMethod.GetParameters();
                     if (parms.Length == 2 && parms[0].ParameterType == typeof(string))
                     {
-                        try
-                        {
-                            setMethod.Invoke(node, new object[] { settingName, convertedValue });
-                        }
-                        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException is InvalidCastException || tie.InnerException is ArgumentException)
-                        {
-                            // Type mismatch (e.g. int vs uint) — retry with uint/long conversions
-                            if (convertedValue is int intVal)
-                            {
-                                convertedValue = (uint)intVal;
-                                setMethod.Invoke(node, new object[] { settingName, convertedValue });
-                            }
-                            else throw;
-                        }
+                        setMethod.Invoke(node, new object[] { settingName, convertedValue });
                         settingApplied = true;
                         break;
                     }
@@ -1657,63 +1419,90 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
             try
             {
+                // Map user-friendly type names to VFX internal slot types
                 Type vfxSlotType = ResolveVFXSlotType(propTypeName);
                 if (vfxSlotType == null)
-                    return new { success = false, message = $"Unknown property type '{propTypeName}'. Supported: float, int, uint, bool, Vector2, Vector3, Vector4, Color, Gradient, AnimationCurve, Texture2D, Texture3D, Cubemap, Mesh, GraphicsBuffer" };
+                    return new { success = false, message = $"Unknown property type '{propTypeName}'. Supported: float, int, uint, bool, Vector2, Vector3, Vector4, Color, Gradient, AnimationCurve, Texture2D, Texture3D, Cubemap, Mesh" };
 
+                // VFXGraph.AddParameter(string name, VFXSlotType type) or via AddChild with a VFXParameter
+                // Strategy: Create a VFXParameter, set its output type
                 Type vfxParameterType = GetVFXType("VFXParameter");
                 if (vfxParameterType == null)
                     return new { success = false, message = "VFXParameter type not found" };
 
                 ScriptableObject param = ScriptableObject.CreateInstance(vfxParameterType);
 
-                // Step 1: Set name and exposed flag via SerializedObject BEFORE adding to graph
+                // IMPORTANT: Add to graph FIRST as a clean instance — modifying fields before AddChild corrupts the object
+                bool added = false;
+                string addErrors = "";
+                var addMethods = graph.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Where(m => m.Name == "AddChild")
+                    .OrderByDescending(m => m.GetParameters().Length)
+                    .ToArray();
+
+                foreach (var method in addMethods)
+                {
+                    var parms = method.GetParameters();
+                    try
+                    {
+                        if (parms.Length >= 1)
+                        {
+                            object[] args;
+                            if (parms.Length == 3) args = new object[] { param, -1, true };
+                            else if (parms.Length == 2) args = new object[] { param, -1 };
+                            else args = new object[] { param };
+                            method.Invoke(graph, args);
+                            added = true;
+                            break;
+                        }
+                    }
+                    catch (System.Reflection.TargetInvocationException tie)
+                    {
+                        addErrors += $"[{parms.Length}p]: {tie.InnerException?.Message ?? tie.Message}; ";
+                        continue;
+                    }
+                }
+
+                if (!added)
+                    return new { success = false, message = $"Could not add parameter to graph. Errors: {addErrors}" };
+
+                // Now safely set properties via SerializedObject
                 var so = new SerializedObject(param);
 
+                // Set exposed name
                 var exposedNameSP = so.FindProperty("m_ExposedName");
                 if (exposedNameSP != null)
                     exposedNameSP.stringValue = propName;
                 else
                     param.name = propName;
 
+                // Set exposed flag
                 var exposedSP = so.FindProperty("m_Exposed");
                 if (exposedSP != null)
                     exposedSP.boolValue = exposed;
 
+                // Set type — m_Type contains a nested m_SerializableType string
+                var typeSP = so.FindProperty("m_Type");
+                if (typeSP != null)
+                {
+                    var serTypeSP = typeSP.FindPropertyRelative("m_SerializableType");
+                    if (serTypeSP != null)
+                        serTypeSP.stringValue = vfxSlotType.AssemblyQualifiedName;
+                }
+
                 so.ApplyModifiedPropertiesWithoutUndo();
 
-                // Step 2: Call Init(Type) to create output slots BEFORE adding to graph.
-                // Without this, VFXParameter.type getter crashes on outputSlots[0] during
-                // graph invalidation because no slots exist yet.
-                MethodInfo initMethod = vfxParameterType.GetMethod("Init",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (initMethod != null)
-                {
-                    initMethod.Invoke(param, new object[] { vfxSlotType });
-                }
-                else
-                {
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError,
-                        message = "VFXParameter.Init method not found — cannot initialize parameter slots" };
-                }
+                // Invalidate node to rebuild slots after property changes
+                InvalidateNode(param);
 
-                // Step 3: AddChild with notify=false to prevent cascade invalidation crash.
-                // VFXModel.AddChild triggers Invalidate(kStructureChanged) when notify=true,
-                // which calls BuildParameterInfo on ALL parameters. Using false defers this.
-                MethodInfo addMethod = VfxGraphReflectionCache.GetMethodCached(
-                    graph.GetType(), "AddChild", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (addMethod == null)
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "AddChild method not found on graph" };
 
-                addMethod.Invoke(graph, new object[] { param, -1, false });
-
-                // Step 4: Safe manual invalidation now that the parameter is fully initialized
-                SafeInvalidate(graph, "kStructureChanged");
-
-                // Step 5: Set default value if provided
+                // Set default value if provided
                 if (defaultValue != null)
                 {
-                    try { SetParameterDefaultValue(param, vfxSlotType, defaultValue); }
+                    try
+                    {
+                        SetParameterDefaultValue(param, vfxSlotType, defaultValue);
+                    }
                     catch { /* Non-critical */ }
                 }
 
@@ -1864,16 +1653,32 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 if (target == null)
                     return new { success = false, message = "Property not found" };
 
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters
-                MethodInfo removeMethod = VfxGraphReflectionCache.GetMethodCached(
-                    graph.GetType(), "RemoveChild", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                // Remove from graph
+                var removeMethods = graph.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Where(m => m.Name == "RemoveChild")
+                    .ToArray();
 
-                if (removeMethod == null)
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "RemoveChild method not found on graph" };
+                bool removed = false;
+                foreach (var method in removeMethods)
+                {
+                    var parms = method.GetParameters();
+                    if (parms.Length >= 1)
+                    {
+                        try
+                        {
+                            if (parms.Length == 1)
+                                method.Invoke(graph, new object[] { target });
+                            else if (parms.Length == 2)
+                                method.Invoke(graph, new object[] { target, true });
+                            removed = true;
+                            break;
+                        }
+                        catch { continue; }
+                    }
+                }
 
-                removeMethod.Invoke(graph, new object[] { target, false });
-
-                SafeInvalidate(graph, "kStructureChanged");
+                if (!removed)
+                    return new { success = false, message = "Could not remove property from graph" };
 
                 EditorUtility.SetDirty(resource);
                 AssetDatabase.SaveAssets();
@@ -2157,8 +1962,7 @@ public class {scriptName} : MonoBehaviour
                 {
                     success = true,
                     message = $"Created GraphicsBuffer helper script at {fullPath}",
-                    data = new { path = fullPath, propertyName = vfxPropertyName, stride, count },
-                    warning = "Script creation triggered AssetDatabase.Refresh(). Tools may be briefly unavailable during domain reload."
+                    data = new { path = fullPath, propertyName = vfxPropertyName, stride, count }
                 };
             }
             catch (Exception ex)
@@ -2179,10 +1983,10 @@ public class {scriptName} : MonoBehaviour
             string path = @params["path"]?.ToString();
             int sourceContextId = @params["sourceContextId"]?.ToObject<int>() ?? 0;
             int gpuEventContextId = @params["gpuEventContextId"]?.ToObject<int>() ?? 0;
-            int sourceFlowIndex = @params["sourceFlowIndex"]?.ToObject<int>() ?? -1;
+            int sourceFlowIndex = @params["sourceFlowIndex"]?.ToObject<int>() ?? 0;
 
             if (string.IsNullOrEmpty(path) || sourceContextId == 0 || gpuEventContextId == 0)
-                return new { success = false, error_code = VfxErrorCodes.ValidationError, message = "Path, sourceContextId, and gpuEventContextId are required" };
+                return new { success = false, message = "Path, sourceContextId, and gpuEventContextId are required" };
 
             ScriptableObject graph = GetGraph(path, out UnityEngine.Object resource, out string error);
             if (graph == null) return new { success = false, message = error ?? "Could not load graph" };
@@ -2193,31 +1997,21 @@ public class {scriptName} : MonoBehaviour
             var sourceContext = models.FirstOrDefault(m => m.GetInstanceID() == sourceContextId);
             var gpuEventContext = models.FirstOrDefault(m => m.GetInstanceID() == gpuEventContextId);
 
-            if (sourceContext == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Source context {sourceContextId} not found" };
-            if (gpuEventContext == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"GPU Event context {gpuEventContextId} not found" };
+            if (sourceContext == null) return new { success = false, message = $"Source context {sourceContextId} not found" };
+            if (gpuEventContext == null) return new { success = false, message = $"GPU Event context {gpuEventContextId} not found" };
 
             try
             {
                 Type vfxContextType = GetVFXType("VFXContext");
                 if (vfxContextType == null)
-                    return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "VFXContext type not found" };
+                    return new { success = false, message = "VFXContext type not found" };
 
-                // Collect flow slot info for diagnostics
-                int outputFlowCount = GetFlowSlotCount(sourceContext, "outputFlowSlot");
-                int inputFlowCount = GetFlowSlotCount(gpuEventContext, "inputFlowSlot");
-
-                // If sourceFlowIndex not specified, try the GPU event slot (usually index 1+)
-                if (sourceFlowIndex < 0)
-                    sourceFlowIndex = outputFlowCount > 1 ? 1 : 0;
-
-                // Try LinkTo first, then LinkFrom, capturing actual errors
-                var errors = new List<string>();
-                bool linked = false;
-
+                // Link source context's flow output to GPU Event context's flow input
                 var linkToMethods = sourceContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     .Where(m => m.Name == "LinkTo")
                     .ToArray();
 
+                bool linked = false;
                 foreach (var method in linkToMethods)
                 {
                     var parms = method.GetParameters();
@@ -2225,22 +2019,20 @@ public class {scriptName} : MonoBehaviour
                     {
                         try
                         {
-                            if (parms.Length == 3)
-                                method.Invoke(sourceContext, new object[] { gpuEventContext, sourceFlowIndex, 0 });
-                            else if (parms.Length == 1)
+                            if (parms.Length == 1)
                                 method.Invoke(sourceContext, new object[] { gpuEventContext });
+                            else if (parms.Length == 3)
+                                method.Invoke(sourceContext, new object[] { gpuEventContext, sourceFlowIndex, 0 });
                             linked = true;
                             break;
                         }
-                        catch (TargetInvocationException tie)
-                        {
-                            errors.Add($"LinkTo({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
-                        }
+                        catch { continue; }
                     }
                 }
 
                 if (!linked)
                 {
+                    // Try LinkFrom on the GPU event
                     var linkFromMethods = gpuEventContext.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                         .Where(m => m.Name == "LinkFrom")
                         .ToArray();
@@ -2252,42 +2044,20 @@ public class {scriptName} : MonoBehaviour
                         {
                             try
                             {
-                                if (parms.Length == 3)
-                                    method.Invoke(gpuEventContext, new object[] { sourceContext, sourceFlowIndex, 0 });
-                                else if (parms.Length == 1)
+                                if (parms.Length == 1)
                                     method.Invoke(gpuEventContext, new object[] { sourceContext });
+                                else if (parms.Length == 3)
+                                    method.Invoke(gpuEventContext, new object[] { sourceContext, sourceFlowIndex, 0 });
                                 linked = true;
                                 break;
                             }
-                            catch (TargetInvocationException tie)
-                            {
-                                errors.Add($"LinkFrom({parms.Length}p): {tie.InnerException?.Message ?? tie.Message}");
-                            }
+                            catch { continue; }
                         }
                     }
                 }
 
                 if (!linked)
-                {
-                    return new
-                    {
-                        success = false,
-                        error_code = VfxErrorCodes.InternalException,
-                        message = "Could not link GPU Event. GPU Events require a TriggerEvent block (e.g. TriggerEventAlways, TriggerEventOnDie) in the source context to create the GPU event flow output.",
-                        details = new
-                        {
-                            sourceType = sourceContext.GetType().Name,
-                            targetType = gpuEventContext.GetType().Name,
-                            sourceOutputFlowSlots = outputFlowCount,
-                            targetInputFlowSlots = inputFlowCount,
-                            attemptedFlowIndex = sourceFlowIndex,
-                            linkErrors = errors,
-                            remediation = "1) Add a TriggerEventAlways or TriggerEventOnDie block to the source context via add_block. " +
-                                          "2) Then call link_gpu_event again — the source context will have an additional GPU event flow output. " +
-                                          "3) Alternatively, use link_contexts with the correct fromFlowIndex for the GPU event output."
-                        }
-                    };
-                }
+                    return new { success = false, message = "Could not link GPU Event" };
 
                 EditorUtility.SetDirty(resource);
                 AssetDatabase.SaveAssets();
@@ -2296,34 +2066,8 @@ public class {scriptName} : MonoBehaviour
             }
             catch (Exception ex)
             {
-                return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Error linking GPU Event: {ex.Message}" };
+                return new { success = false, message = $"Error linking GPU Event: {ex.Message}" };
             }
-        }
-
-        /// <summary>
-        /// Gets the number of flow slots (input or output) on a context node.
-        /// </summary>
-        private static int GetFlowSlotCount(ScriptableObject contextNode, string slotFieldName)
-        {
-            try
-            {
-                var field = contextNode.GetType().GetField(slotFieldName,
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (field != null)
-                {
-                    var slots = field.GetValue(contextNode) as Array;
-                    return slots?.Length ?? 0;
-                }
-                var prop = contextNode.GetType().GetProperty(slotFieldName,
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (prop != null)
-                {
-                    var slots = prop.GetValue(contextNode) as Array;
-                    return slots?.Length ?? 0;
-                }
-            }
-            catch { }
-            return -1;
         }
 
         /// <summary>
@@ -2630,18 +2374,11 @@ public class {scriptName} : MonoBehaviour
         /// </summary>
         private static void InvalidateNode(ScriptableObject node)
         {
-            SafeInvalidate(node, "kSettingChanged");
-        }
+            var invalidateMethods = node.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m => m.Name == "Invalidate")
+                .ToArray();
 
-        /// <summary>
-        /// Safely invokes Invalidate on a VFX model (node, context, or graph) with the given cause.
-        /// Wrapped in try/catch because invalidation can crash if any VFXParameter in the graph
-        /// has uninitialized slots. This is non-fatal for structural mutations since the actual
-        /// Add/RemoveChild already succeeded before invalidation runs.
-        /// </summary>
-        private static void SafeInvalidate(ScriptableObject model, string causeName)
-        {
-            if (model == null) return;
+            if (invalidateMethods.Length == 0) return;
 
             try
             {
@@ -2649,33 +2386,23 @@ public class {scriptName} : MonoBehaviour
                     .SelectMany(a => { try { return a.GetTypes(); } catch { return Type.EmptyTypes; } })
                     .FirstOrDefault(t => t.Name == "InvalidationCause" && t.IsEnum);
 
-                if (invalidationCauseType == null) return;
-
-                object cause;
-                try { cause = Enum.Parse(invalidationCauseType, causeName, true); }
-                catch { return; }
-
-                var invalidateMethods = model.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    .Where(m => m.Name == "Invalidate")
-                    .ToArray();
-
-                var invalidateMethod = invalidateMethods.FirstOrDefault(m =>
-                    m.GetParameters().Length >= 1 && m.GetParameters()[0].ParameterType == invalidationCauseType);
-
-                if (invalidateMethod != null)
+                if (invalidationCauseType != null)
                 {
-                    var parms = invalidateMethod.GetParameters();
-                    if (parms.Length == 1)
-                        invalidateMethod.Invoke(model, new object[] { cause });
-                    else if (parms.Length >= 2)
-                        invalidateMethod.Invoke(model, new object[] { cause, model });
+                    object settingChanged = Enum.Parse(invalidationCauseType, "kSettingChanged", true);
+                    var invalidateMethod = invalidateMethods.FirstOrDefault(m =>
+                        m.GetParameters().Length >= 1 && m.GetParameters()[0].ParameterType == invalidationCauseType);
+
+                    if (invalidateMethod != null)
+                    {
+                        var parms = invalidateMethod.GetParameters();
+                        if (parms.Length == 1)
+                            invalidateMethod.Invoke(node, new object[] { settingChanged });
+                        else if (parms.Length >= 2)
+                            invalidateMethod.Invoke(node, new object[] { settingChanged, node });
+                    }
                 }
             }
-            catch
-            {
-                // Invalidation failure is non-fatal for structural mutations.
-                // The actual AddChild/RemoveChild already succeeded before this point.
-            }
+            catch { }
         }
     }
 }

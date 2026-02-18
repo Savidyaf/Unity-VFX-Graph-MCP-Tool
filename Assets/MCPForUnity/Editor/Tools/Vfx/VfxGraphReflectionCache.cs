@@ -48,20 +48,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             string key = ownerType.FullName + "::" + methodName + "::" + (int)flags;
             if (MethodBySignature.TryGetValue(key, out var cachedMethod)) return cachedMethod;
 
-            MethodInfo method;
-            try
-            {
-                method = ownerType.GetMethod(methodName, flags);
-            }
-            catch (AmbiguousMatchException)
-            {
-                // Multiple overloads exist; pick the one with the most parameters
-                // (e.g., AddChild(VFXModel, int, bool) over AddChild(VFXModel))
-                method = ownerType.GetMethods(flags)
-                    .Where(m => m.Name == methodName)
-                    .OrderByDescending(m => m.GetParameters().Length)
-                    .FirstOrDefault();
-            }
+            var method = ownerType.GetMethod(methodName, flags);
             MethodBySignature[key] = method;
             return method;
         }
