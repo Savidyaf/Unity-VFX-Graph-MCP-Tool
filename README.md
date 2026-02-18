@@ -1,4 +1,4 @@
-# VFX MCP WIP
+# Unity MPC Tool to support VFX Graph changes
 
 URP-first productionization of custom VFX tools for MCP for Unity.
 
