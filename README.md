@@ -1,6 +1,7 @@
 # Unity MPC Tool to support VFX Graph changes in URP
 
 Warning : This is a Work In Progress tool with basic functionality tested. All the code here is written by AI tools in a very short time. It will be update as time goes on.
+Update : I decided to scrap this approach to edit the YMAL file directly. This tool will be used to train the AI to build the YMAL editor
 
 
 ## What is included
@@ -15,7 +16,7 @@ Warning : This is a Work In Progress tool with basic functionality tested. All t
 ## Key paths
 
 - Tool source: `Assets/MCPForUnity/Editor/Tools/Vfx`
-- Package scaffold: `Packages/com.spiralingstudio.mcp.vfxgraph`
+- Package Path: `Packages/com.spiralingstudio.mcp.vfxgraph`
 - Tests: `Assets/MCPForUnity/Editor/Tests/Editor`
 
 ## Upstream references
