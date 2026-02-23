@@ -9,13 +9,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
         private static readonly IReadOnlyDictionary<string, Func<JObject, object>> GraphHandlers =
             new Dictionary<string, Func<JObject, object>>(StringComparer.OrdinalIgnoreCase)
             {
-                // Graph introspection
+                // Introspection
                 { "get_graph_info", VfxGraphEdit.GetGraphInfo },
+                { "get_connections", VfxGraphEdit.GetConnections },
+                { "get_node_settings", VfxGraphEdit.GetNodeSettings },
                 { "list_node_types", VfxGraphEdit.ListNodeTypes },
                 { "list_block_types", VfxGraphEdit.ListBlockTypes },
                 { "list_properties", VfxGraphEdit.ListProperties },
-                { "get_node_settings", VfxGraphEdit.GetNodeSettings },
-                { "get_connections", VfxGraphEdit.GetConnections },
+                { "list_attributes", VfxGraphEdit.ListAttributes },
                 { "save_graph", VfxGraphEdit.SaveGraph },
 
                 // Node CRUD
@@ -32,20 +33,41 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 { "link_contexts", VfxGraphEdit.LinkContexts },
                 { "add_block", VfxGraphEdit.AddBlock },
                 { "remove_block", VfxGraphEdit.RemoveBlock },
+                { "add_attribute_block", VfxGraphEdit.AddAttributeBlock },
+                { "reorder_block", VfxGraphEdit.ReorderBlock },
+                { "set_block_activation", VfxGraphEdit.SetBlockActivation },
+
+                // Context & output configuration
+                { "set_context_settings", VfxGraphEdit.SetContextSettings },
+                { "configure_output", VfxGraphEdit.ConfigureOutput },
+                { "set_bounds", VfxGraphEdit.SetBounds },
 
                 // Blackboard properties
                 { "add_property", VfxGraphEdit.AddProperty },
                 { "remove_property", VfxGraphEdit.RemoveProperty },
                 { "set_property_value", VfxGraphEdit.SetPropertyDefaultValue },
 
+                // Custom attributes
+                { "add_custom_attribute", VfxGraphEdit.AddCustomAttribute },
+                { "remove_custom_attribute", VfxGraphEdit.RemoveCustomAttribute },
+
                 // HLSL & buffer
                 { "set_hlsl_code", VfxGraphEdit.SetHLSLCode },
                 { "create_buffer_helper", VfxGraphEdit.CreateGraphicsBufferHelper },
+                { "setup_buffer_pipeline", VfxGraphEdit.SetupBufferPipeline },
 
-                // GPU events & space
+                // GPU events, space & capacity
                 { "link_gpu_event", VfxGraphEdit.LinkGPUEvent },
                 { "set_capacity", VfxGraphEdit.SetCapacity },
                 { "set_space", VfxGraphEdit.SetSpace },
+
+                // Compilation
+                { "compile_graph", VfxGraphEdit.CompileGraph },
+                { "get_compilation_status", VfxGraphEdit.GetCompilationStatus },
+
+                // Batch & recipes
+                { "batch", VfxGraphEdit.BatchExecute },
+                { "create_from_recipe", VfxGraphEdit.CreateFromRecipe },
 
                 // Asset lifecycle
                 { "create_asset", VfxGraphAssets.CreateAsset },
@@ -53,7 +75,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 { "list_templates", VfxGraphAssets.ListTemplates },
                 { "assign_asset", VfxGraphAssets.AssignAsset },
 
-                // Console (temporary workaround for broken upstream read_console in Unity 6)
+                // Console
                 { "read_vfx_console", VfxConsoleReader.HandleAction },
             };
 
@@ -61,9 +83,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
         {
             mappedResult = null;
             if (!GraphHandlers.TryGetValue(action, out var handler))
-            {
                 return false;
-            }
 
             mappedResult = VfxGraphResultMapper.Wrap(handler(@params), action);
             return true;

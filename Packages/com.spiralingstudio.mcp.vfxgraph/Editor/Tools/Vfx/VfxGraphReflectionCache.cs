@@ -85,6 +85,24 @@ namespace MCPForUnity.Editor.Tools.Vfx
             return resolved;
         }
 
+        internal static Type ResolveVFXType(string typeName)
+        {
+            if (string.IsNullOrWhiteSpace(typeName)) return null;
+            string cacheKey = "vfxtype|" + typeName;
+            if (TypeByName.TryGetValue(cacheKey, out var cached)) return cached;
+
+            var resolved = GetAssemblies()
+                .SelectMany(SafeGetTypes)
+                .FirstOrDefault(t =>
+                    string.Equals(t.Name, typeName, StringComparison.OrdinalIgnoreCase) &&
+                    t.GetCustomAttributes(true).Any(a =>
+                        a.GetType().Name == "VFXTypeAttribute" ||
+                        a.GetType().FullName?.Contains("VFXType") == true));
+
+            TypeByName[cacheKey] = resolved;
+            return resolved;
+        }
+
         internal static Assembly GetAssemblyByName(string assemblyName)
         {
             return GetAssemblies().FirstOrDefault(a => a.GetName().Name == assemblyName);

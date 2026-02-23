@@ -11,7 +11,7 @@ using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Vfx
 {
-    public static class VfxGraphEdit
+    public static partial class VfxGraphEdit
     {
         // Helper to get internal types without crashing if they change
         private static Type GetVFXType(string typeName)
@@ -34,7 +34,29 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Type vfxNodeType = GetVFXType("VFXNode");
             Type typeToInstantiate = VfxGraphReflectionCache.ResolveType(nodeType, vfxNodeType);
 
-            if (typeToInstantiate == null) return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Node type '{nodeType}' not found" };
+            if (typeToInstantiate == null)
+            {
+                var suggestions = new List<string>();
+                if (VfxAttributeAliases.TryResolveGetAttribute(nodeType, out string attr))
+                    suggestions.Add($"Use GetAttribute operator with attribute='{attr}'");
+
+                string[] commonTypes = { "Operator", "Parameter", "Context", "Spawner" };
+                var typeHints = commonTypes
+                    .SelectMany(prefix => VfxGraphReflectionCache.GetAssemblies()
+                        .SelectMany(VfxGraphReflectionCache.SafeGetTypes)
+                        .Where(t => t.Name.IndexOf(nodeType.Replace("VFX", ""), StringComparison.OrdinalIgnoreCase) >= 0 &&
+                                    t.Namespace?.StartsWith("UnityEditor.VFX") == true && !t.IsAbstract)
+                        .Select(t => t.Name))
+                    .Distinct().Take(10).ToList();
+
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.NotFound,
+                    message = $"Node type '{nodeType}' not found",
+                    details = new { suggestions, similarTypes = typeHints }
+                };
+            }
 
             try 
             {
@@ -904,6 +926,29 @@ namespace MCPForUnity.Editor.Tools.Vfx
             return nameProp.GetValue(slot)?.ToString() ?? string.Empty;
         }
 
+        private static List<object> CollectInlineSettings(ScriptableObject model)
+        {
+            var result = new List<object>();
+            try
+            {
+                var fields = model.GetType()
+                    .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .Where(f => f.GetCustomAttributes(true).Any(a => a.GetType().Name.Contains("VFXSetting")));
+
+                foreach (var field in fields)
+                {
+                    try
+                    {
+                        var val = field.GetValue(model);
+                        result.Add(new { name = field.Name, type = field.FieldType.Name, value = val?.ToString() });
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return result.Count > 0 ? result : null;
+        }
+
         private static List<object> CollectSlotInfo(ScriptableObject model, bool isOutput)
         {
             var result = new List<object>();
@@ -1096,7 +1141,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                                 index = blockIdx,
                                 inputSlots = blockInputSlots,
                                 outputSlots = blockOutputSlots,
-                                hint = "This block's id can be used with set_node_property, get_node_settings, and set_node_setting."
+                                settings = CollectInlineSettings(child)
                             });
                             blockIdx++;
                         }
@@ -1112,6 +1157,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
                 bool isContext = vfxContextType != null && vfxContextType.IsAssignableFrom(model.GetType());
 
+                string exposedName = null;
+                try
+                {
+                    var expProp = model.GetType().GetProperty("exposedName",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (expProp != null) exposedName = expProp.GetValue(model)?.ToString();
+                }
+                catch { }
+
                 var nodeData = new Dictionary<string, object>
                 {
                     { "id", model.GetInstanceID() },
@@ -1122,6 +1176,12 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     { "outputSlots", outputSlots },
                     { "isContext", isContext }
                 };
+
+                if (!string.IsNullOrEmpty(exposedName))
+                    nodeData["exposedName"] = exposedName;
+
+                if (!isContext)
+                    nodeData["settings"] = CollectInlineSettings(model);
 
                 if (isContext && TryGetContextCapacity(model, out int contextCapacity))
                 {
@@ -1136,6 +1196,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 nodeInfos.Add(nodeData);
             }
 
+            var dataConnections = CollectDataConnections(models);
+
             return new
             {
                 success = true,
@@ -1144,9 +1206,61 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     assetPath = path,
                     nodeCount = nodeInfos.Count,
-                    nodes = nodeInfos
+                    nodes = nodeInfos,
+                    dataConnections
                 }
             };
+        }
+
+        private static List<object> CollectDataConnections(List<ScriptableObject> models)
+        {
+            var connections = new List<object>();
+            try
+            {
+                foreach (var model in models)
+                {
+                    var inputSlotsProp = model.GetType().GetProperty("inputSlots",
+                        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (inputSlotsProp == null) continue;
+                    var slots = inputSlotsProp.GetValue(model) as IEnumerable;
+                    if (slots == null) continue;
+
+                    int slotIdx = 0;
+                    foreach (var slot in slots)
+                    {
+                        try
+                        {
+                            var linkedSlotProp = slot.GetType().GetProperty("refSlot",
+                                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            var linkedSlot = linkedSlotProp?.GetValue(slot);
+                            if (linkedSlot == null) { slotIdx++; continue; }
+
+                            var ownerProp = linkedSlot.GetType().GetProperty("owner",
+                                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            var owner = ownerProp?.GetValue(linkedSlot) as ScriptableObject;
+                            if (owner == null) { slotIdx++; continue; }
+
+                            string slotName = slot.GetType().GetProperty("name",
+                                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(slot)?.ToString();
+                            string srcSlotName = linkedSlot.GetType().GetProperty("name",
+                                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(linkedSlot)?.ToString();
+
+                            connections.Add(new
+                            {
+                                fromNodeId = owner.GetInstanceID(),
+                                fromSlot = srcSlotName,
+                                toNodeId = model.GetInstanceID(),
+                                toSlot = slotName,
+                                toSlotIndex = slotIdx
+                            });
+                        }
+                        catch { }
+                        slotIdx++;
+                    }
+                }
+            }
+            catch { }
+            return connections;
         }
 
         /// <summary>
@@ -1451,25 +1565,52 @@ namespace MCPForUnity.Editor.Tools.Vfx
             Type typeToCreate = VfxGraphReflectionCache.ResolveType(blockType, vfxBlockBase);
             if (typeToCreate != null && typeToCreate.IsAbstract) typeToCreate = null;
 
+            VfxAttributeAliases.BlockAlias resolvedAlias = default;
+            bool usedAlias = false;
+
+            if (typeToCreate == null && VfxAttributeAliases.TryResolveBlock(blockType, out resolvedAlias))
+            {
+                typeToCreate = VfxGraphReflectionCache.ResolveType(resolvedAlias.InternalType, vfxBlockBase);
+                if (typeToCreate != null && typeToCreate.IsAbstract) typeToCreate = null;
+                usedAlias = typeToCreate != null;
+            }
+
             if (typeToCreate == null)
-                return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Block type '{blockType}' not found (must be a VFXBlock subclass)" };
+            {
+                var suggestions = VfxAttributeAliases.AllBlockAliases.Keys
+                    .Where(k => k.IndexOf(blockType.Replace("Set", "").Replace("Add", "").Replace("Get", ""),
+                        StringComparison.OrdinalIgnoreCase) >= 0)
+                    .Take(10).ToList();
+                return new
+                {
+                    success = false,
+                    error_code = VfxErrorCodes.NotFound,
+                    message = $"Block type '{blockType}' not found",
+                    details = new
+                    {
+                        hint = "Use add_attribute_block for attribute operations (SetPosition, SetVelocity, etc.) or provide an internal VFXBlock class name.",
+                        suggestions = suggestions.Count > 0 ? suggestions : null,
+                        availableAliases = VfxAttributeAliases.AllBlockAliases.Keys.OrderBy(k => k).ToList()
+                    }
+                };
+            }
 
             try
             {
-                // Create the block instance
                 ScriptableObject blockInstance = ScriptableObject.CreateInstance(typeToCreate);
                 if (blockInstance == null)
                     return new { success = false, error_code = VfxErrorCodes.InternalException, message = $"Failed to create instance of {blockType}" };
 
-                // Add block to context using AddChild
                 MethodInfo addChildMethod = contextNode.GetType().GetMethod("AddChild",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
                 if (addChildMethod == null)
                     return new { success = false, error_code = VfxErrorCodes.ReflectionError, message = "AddChild method not found on context" };
 
-                // Use notify=false to prevent cascade invalidation crash from corrupt parameters
                 addChildMethod.Invoke(contextNode, new object[] { blockInstance, index, false });
+
+                if (usedAlias && resolvedAlias.Settings != null)
+                    ApplyBlockSettings(blockInstance, resolvedAlias.Settings);
 
                 SafeInvalidate(contextNode, "kStructureChanged");
 
@@ -1479,8 +1620,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 {
                     success = true,
                     id = blockInstance.GetInstanceID(),
-                    message = $"Added block {blockType} to context {contextNode.GetType().Name}",
-                    blockType = typeToCreate.Name
+                    message = $"Added block {blockType}{(usedAlias ? " (via alias)" : "")} to {contextNode.GetType().Name}",
+                    blockType = typeToCreate.Name,
+                    alias = usedAlias ? blockType : null
                 };
             }
             catch (TargetInvocationException tie)
@@ -1494,9 +1636,34 @@ namespace MCPForUnity.Editor.Tools.Vfx
             }
         }
 
-        /// <summary>
-        /// Removes a VFXBlock from its parent context by instance ID.
-        /// </summary>
+        private static void ApplyBlockSettings(ScriptableObject block, IReadOnlyDictionary<string, string> settings)
+        {
+            var setMethods = block.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(m => m.Name == "SetSettingValue" && m.GetParameters().Length == 2 && m.GetParameters()[0].ParameterType == typeof(string))
+                .ToArray();
+
+            if (setMethods.Length == 0) return;
+            var setMethod = setMethods[0];
+
+            foreach (var kv in settings)
+            {
+                try
+                {
+                    FieldInfo field = FindVfxSettingField(block.GetType(), kv.Key);
+                    object value = kv.Value;
+
+                    if (field != null && field.FieldType.IsEnum)
+                        value = Enum.Parse(field.FieldType, kv.Value, true);
+
+                    setMethod.Invoke(block, new object[] { kv.Key, value });
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[VFX MCP] ApplyBlockSettings: failed to set '{kv.Key}' = '{kv.Value}': {ex.Message}");
+                }
+            }
+        }
+
         public static object RemoveBlock(JObject @params)
         {
             string path = @params["path"]?.ToString();
@@ -1746,7 +1913,18 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     }
                     else
                     {
-                        return new { success = false, error_code = VfxErrorCodes.NotFound, message = $"Could not find SetSettingValue method or field '{settingName}' on {node.GetType().Name}" };
+                        var availableFields = node.GetType()
+                            .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                            .Where(f => f.GetCustomAttributes(true).Any(a => a.GetType().Name.Contains("VFXSetting")))
+                            .Select(f => new { name = f.Name, type = f.FieldType.Name })
+                            .ToList();
+                        return new
+                        {
+                            success = false,
+                            error_code = VfxErrorCodes.NotFound,
+                            message = $"Setting '{settingName}' not found on {node.GetType().Name}",
+                            details = new { availableSettings = availableFields, nodeType = node.GetType().Name }
+                        };
                     }
                 }
 
@@ -2549,10 +2727,15 @@ public class {scriptName} : MonoBehaviour
 
                 var candidateFlowIndices = BuildCandidateFlowIndices(sourceFlowIndex, outputFlowCount);
 
-                // Ensure graph state is fully up to date before linking.
                 SafeInvalidate(sourceContext, "kSettingChanged");
                 SafeInvalidate(graph, "kStructureChanged");
                 PersistGraph(resource);
+
+                try { AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate); }
+                catch { }
+
+                outputFlowCount = GetFlowSlotCount(sourceContext, "outputFlowSlot");
+                inputFlowCount = GetFlowSlotCount(gpuEventContext, "inputFlowSlot");
 
                 // Try LinkTo first, then LinkFrom, capturing actual errors
                 var errors = new List<string>();
@@ -3309,10 +3492,29 @@ public class {scriptName} : MonoBehaviour
 
         private static Type ResolveRuntimeTypeByName(string requestedTypeName)
         {
+            if (string.IsNullOrWhiteSpace(requestedTypeName)) return null;
+
+            switch (requestedTypeName.ToLowerInvariant())
+            {
+                case "float": return typeof(float);
+                case "float2": case "vector2": return typeof(UnityEngine.Vector2);
+                case "float3": case "vector3": return typeof(UnityEngine.Vector3);
+                case "float4": case "vector4": return typeof(UnityEngine.Vector4);
+                case "int": return typeof(int);
+                case "uint": return typeof(uint);
+                case "bool": return typeof(bool);
+                case "color": return typeof(UnityEngine.Color);
+                case "matrix4x4": return typeof(UnityEngine.Matrix4x4);
+            }
+
             Type resolved = Type.GetType(requestedTypeName, false);
             if (resolved != null) return resolved;
 
-            return VfxGraphReflectionCache.ResolveType(requestedTypeName, caseInsensitive: false);
+            resolved = VfxGraphReflectionCache.ResolveType(requestedTypeName, caseInsensitive: false);
+            if (resolved != null) return resolved;
+
+            resolved = VfxGraphReflectionCache.ResolveVFXType(requestedTypeName);
+            return resolved;
         }
 
         private static bool TryGetContextData(ScriptableObject contextNode, out object contextData)
