@@ -1,3 +1,4 @@
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using MCPForUnity.Editor.Helpers;
 
@@ -9,29 +10,30 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object HandleCommand(JObject @params)
         {
             if (!VfxInputValidation.TryGetRequiredString(@params, "path", out string path, out object error))
-            {
                 return error;
-            }
 
-            var graphInfoResult = VfxGraphResultMapper.Wrap(
-                VfxGraphEdit.GetGraphInfo(new JObject { ["path"] = path }),
-                "get_graph_info");
+            var pathParam = new JObject { ["path"] = path };
 
-            var propertyResult = VfxGraphResultMapper.Wrap(
-                VfxGraphEdit.ListProperties(new JObject { ["path"] = path }),
-                "list_properties");
+            var graphInfo = VfxGraphResultMapper.Wrap(VfxGraphEdit.GetGraphInfo(pathParam), "get_graph_info");
+            var properties = VfxGraphResultMapper.Wrap(VfxGraphEdit.ListProperties(pathParam), "list_properties");
+            var connections = VfxGraphResultMapper.Wrap(VfxGraphEdit.GetConnections(pathParam), "get_connections");
+            var compilation = VfxGraphResultMapper.Wrap(VfxGraphEdit.GetCompilationStatus(pathParam), "get_compilation_status");
+            var attributes = VfxGraphResultMapper.Wrap(VfxGraphEdit.ListAttributes(pathParam), "list_attributes");
 
             return VfxToolContract.Success(
-                $"Inspection complete for {path}",
+                $"Full inspection of {path}",
                 new
                 {
                     path,
-                    graph = graphInfoResult,
-                    properties = propertyResult
-                },
-                new
-                {
-                    note = "inspect_vfx_asset now returns live graph and property introspection data."
+                    graph = graphInfo,
+                    properties,
+                    connections,
+                    compilation,
+                    attributes,
+                    availableBlockAliases = VfxAttributeAliases.AllBlockAliases
+                        .Select(kv => new { alias = kv.Key, internalType = kv.Value.InternalType, description = kv.Value.Description })
+                        .OrderBy(x => x.alias)
+                        .ToList()
                 });
         }
     }

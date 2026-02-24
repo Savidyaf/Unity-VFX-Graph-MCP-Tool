@@ -6,7 +6,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
 {
     internal static class VfxToolContract
     {
-        internal const string ToolVersion = "1.0.0";
+        internal const string ToolVersion = "2.0.0";
 
         internal static object Success(string message, object data = null, object details = null)
         {
@@ -23,13 +23,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         internal static object Error(string errorCode, string message, object details = null, object data = null)
         {
+            string code = string.IsNullOrEmpty(errorCode) ? VfxErrorCodes.UnknownError : errorCode;
             return new
             {
                 success = false,
-                error_code = string.IsNullOrEmpty(errorCode) ? VfxErrorCodes.UnknownError : errorCode,
+                error_code = code,
+                error = code,
                 message,
-                data,
+                data = data ?? details,
                 details,
+                hint = message,
                 tool_version = ToolVersion
             };
         }
@@ -45,6 +48,8 @@ namespace MCPForUnity.Editor.Tools.Vfx
         internal const string NotFound = "not_found";
         internal const string ReflectionError = "reflection_error";
         internal const string InternalException = "internal_exception";
+        internal const string BatchPartialFailure = "batch_partial_failure";
+        internal const string CompilationError = "compilation_error";
         internal const string UnknownError = "unknown_error";
     }
 
@@ -52,14 +57,21 @@ namespace MCPForUnity.Editor.Tools.Vfx
     {
         private static readonly HashSet<string> GraphActionSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "get_graph_info",
+            "get_graph_info", "get_connections", "get_node_settings",
+            "list_node_types", "list_block_types", "list_properties", "list_attributes",
+            "save_graph",
             "add_node", "remove_node", "move_node", "duplicate_node",
-            "connect_nodes", "disconnect_nodes", "get_connections", "set_node_property", "set_node_setting", "get_node_settings", "list_node_types",
-            "link_contexts", "add_block", "remove_block", "list_block_types",
-            "add_property", "list_properties", "remove_property", "set_property_value",
-            "set_hlsl_code", "create_buffer_helper",
+            "connect_nodes", "disconnect_nodes", "set_node_property", "set_node_setting",
+            "link_contexts", "add_block", "remove_block",
+            "add_attribute_block", "reorder_block", "set_block_activation",
+            "set_context_settings", "configure_output", "set_bounds",
+            "add_property", "remove_property", "set_property_value",
+            "add_custom_attribute", "remove_custom_attribute",
+            "set_hlsl_code", "create_buffer_helper", "setup_buffer_pipeline",
             "link_gpu_event", "set_capacity", "set_space",
-            "create_asset", "list_assets", "list_templates", "assign_asset", "save_graph",
+            "compile_graph", "get_compilation_status",
+            "batch", "create_from_recipe",
+            "create_asset", "list_assets", "list_templates", "assign_asset",
             "read_vfx_console"
         };
 
@@ -73,7 +85,9 @@ namespace MCPForUnity.Editor.Tools.Vfx
             { "delete_node", "remove_node" },
             { "graph_remove_node", "remove_node" },
             { "graph_move_node", "move_node" },
-            { "graph_duplicate_node", "duplicate_node" }
+            { "graph_duplicate_node", "duplicate_node" },
+            { "set_attribute", "add_attribute_block" },
+            { "add_attribute", "add_attribute_block" }
         };
 
         internal static string NormalizeGraphAction(string action)

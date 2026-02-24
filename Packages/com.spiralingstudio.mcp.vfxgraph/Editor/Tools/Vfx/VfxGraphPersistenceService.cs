@@ -8,12 +8,14 @@ namespace MCPForUnity.Editor.Tools.Vfx
 {
     internal static class VfxGraphPersistenceService
     {
+        internal static bool DeferPersistence { get; set; }
+
         internal static void Persist(UnityEngine.Object resource)
         {
             if (resource != null)
-            {
                 EditorUtility.SetDirty(resource);
-            }
+
+            if (DeferPersistence) return;
 
             AssetDatabase.SaveAssets();
         }
