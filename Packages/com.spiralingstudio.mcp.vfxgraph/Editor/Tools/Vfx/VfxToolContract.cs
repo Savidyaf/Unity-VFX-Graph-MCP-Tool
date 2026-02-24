@@ -23,13 +23,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
 
         internal static object Error(string errorCode, string message, object details = null, object data = null)
         {
+            string code = string.IsNullOrEmpty(errorCode) ? VfxErrorCodes.UnknownError : errorCode;
             return new
             {
                 success = false,
-                error_code = string.IsNullOrEmpty(errorCode) ? VfxErrorCodes.UnknownError : errorCode,
+                error_code = code,
+                error = code,
                 message,
-                data,
+                data = data ?? details,
                 details,
+                hint = message,
                 tool_version = ToolVersion
             };
         }

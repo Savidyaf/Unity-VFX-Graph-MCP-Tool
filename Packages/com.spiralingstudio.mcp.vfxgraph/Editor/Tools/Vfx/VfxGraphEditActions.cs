@@ -7,6 +7,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.VFX;
 using Newtonsoft.Json.Linq;
+using Object = UnityEngine.Object;
 
 namespace MCPForUnity.Editor.Tools.Vfx
 {
@@ -22,7 +23,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             int contextId = @params["contextId"]?.ToObject<int>() ?? 0;
             string attribute = @params["attribute"]?.ToString();
             string composition = @params["composition"]?.ToString() ?? "Set";
-            string source = @params["source"]?.ToString() ?? "Port";
+            string source = @params["source"]?.ToString() ?? "Slot";
             string random = @params["random"]?.ToString() ?? "Off";
             string channels = @params["channels"]?.ToString();
             int index = @params["index"]?.ToObject<int>() ?? -1;

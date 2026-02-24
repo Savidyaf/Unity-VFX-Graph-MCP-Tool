@@ -67,6 +67,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
                      string.Equals(t.FullName, typeName, comparison)) &&
                     (requiredBase == null || requiredBase.IsAssignableFrom(t)));
 
+            if (resolved == null && typeName.Length >= 3)
+            {
+                resolved = GetAssemblies()
+                    .SelectMany(SafeGetTypes)
+                    .FirstOrDefault(t =>
+                        t.Name.EndsWith(typeName, comparison) &&
+                        !t.IsAbstract &&
+                        (requiredBase == null || requiredBase.IsAssignableFrom(t)));
+            }
+
             TypeByName[cacheKey] = resolved;
             return resolved;
         }

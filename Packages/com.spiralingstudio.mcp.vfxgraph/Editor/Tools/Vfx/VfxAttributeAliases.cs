@@ -75,7 +75,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
             AddDirect("SetAttributeFromMap", "AttributeFromMap", "Attribute from texture map");
 
             AddDirect("Gravity", "Gravity", "Gravity force");
-            AddDirect("LinearDrag", "LinearDrag", "Linear drag");
+            AddDirect("LinearDrag", "Drag", "Linear drag");
             AddDirect("Turbulence", "Turbulence", "Turbulence noise force");
             AddDirect("Force", "Force", "Constant force vector");
             AddDirect("ConformToSphere", "ConformToSphere", "Attract to sphere");
@@ -87,10 +87,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
             AddDirect("KillShape", "KillShape", "Kill on shape contact");
             AddDirect("TriggerShape", "TriggerShape", "Shape collision trigger");
 
-            AddDirect("ConstantSpawnRate", "ConstantRate", "Constant spawn rate");
-            AddDirect("VariableSpawnRate", "VariableRate", "Variable spawn rate");
-            AddDirect("SpawnBurst", "Burst", "Single burst");
-            AddDirect("PeriodicBurst", "PeriodicBurst", "Periodic bursts");
+            AddDirect("ConstantSpawnRate", "VFXSpawnerConstantRate", "Constant spawn rate");
+            AddDirect("VariableSpawnRate", "VFXSpawnerVariableRate", "Variable spawn rate");
+            AddDirect("SpawnBurst", "VFXSpawnerBurst", "Single burst");
+            AddDirect("PeriodicBurst", "VFXSpawnerPeriodicBurst", "Periodic bursts");
 
             AddDirect("TriggerEventOnDie", "TriggerEventOnDie", "GPU event on death");
             AddDirect("TriggerEventRate", "TriggerEventRate", "GPU event at rate");

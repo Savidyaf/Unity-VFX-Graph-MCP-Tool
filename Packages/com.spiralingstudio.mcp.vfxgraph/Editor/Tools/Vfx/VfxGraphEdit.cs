@@ -2247,6 +2247,7 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 return new
                 {
                     success = true,
+                    id = param.GetInstanceID(),
                     message = $"Added {(exposed ? "exposed" : "internal")} property '{propName}' of type {propTypeName}",
                     data = new { id = param.GetInstanceID(), name = propName, type = propTypeName, exposed }
                 };
@@ -2468,7 +2469,6 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     var slot = getOutputSlot.Invoke(target, new object[] { 0 });
                     if (slot != null)
                     {
-                        // Get the slot's value property type
                         var valueProp = slot.GetType().GetProperty("value",
                             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
@@ -2476,10 +2476,19 @@ namespace MCPForUnity.Editor.Tools.Vfx
                         {
                             Type slotValueType = valueProp.PropertyType;
                             object converted = ConvertJTokenToType(valueToken, slotValueType);
-                            if (converted != null)
+
+                            if (converted == null)
                             {
-                                valueProp.SetValue(slot, converted);
+                                Type inferredType = InferSlotValueType(slot.GetType().Name);
+                                if (inferredType != null)
+                                    converted = ConvertJTokenToType(valueToken, inferredType);
                             }
+
+                            if (converted == null)
+                                return new { success = false, error_code = VfxErrorCodes.ValidationError,
+                                    message = $"Could not convert value to {slotValueType.Name} for property '{propName ?? nodeId.ToString()}'" };
+
+                            valueProp.SetValue(slot, converted);
                         }
                     }
                 }
@@ -3264,6 +3273,20 @@ public class {scriptName} : MonoBehaviour
                     return typeof(GraphicsBuffer);
                 default: return null;
             }
+        }
+
+        private static Type InferSlotValueType(string slotTypeName)
+        {
+            if (string.IsNullOrEmpty(slotTypeName)) return null;
+            if (slotTypeName.Contains("Float") || slotTypeName.Contains("Single")) return typeof(float);
+            if (slotTypeName.Contains("Int32") || slotTypeName == "VFXSlotInt32") return typeof(int);
+            if (slotTypeName.Contains("Uint") || slotTypeName == "VFXSlotUint32") return typeof(uint);
+            if (slotTypeName.Contains("Bool")) return typeof(bool);
+            if (slotTypeName.Contains("Color")) return typeof(Color);
+            if (slotTypeName.Contains("Vector2")) return typeof(Vector2);
+            if (slotTypeName.Contains("Float3") || slotTypeName.Contains("Vector3")) return typeof(Vector3);
+            if (slotTypeName.Contains("Float4") || slotTypeName.Contains("Vector4")) return typeof(Vector4);
+            return null;
         }
 
         /// <summary>

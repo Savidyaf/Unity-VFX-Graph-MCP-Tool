@@ -35,12 +35,32 @@ namespace MCPForUnity.Editor.Tools.Vfx
         public static object CreateAsset(JObject @params)
         {
             string assetName = @params["assetName"]?.ToString()?.Trim();
-            string folderPath = @params["folderPath"]?.ToString() ?? "Assets/VFX";
+            string folderPath = @params["folderPath"]?.ToString();
             string template = @params["template"]?.ToString() ?? "empty";
+
+            string fullPath = @params["path"]?.ToString()?.Trim();
+            if (!string.IsNullOrEmpty(fullPath))
+            {
+                if (string.IsNullOrEmpty(assetName))
+                {
+                    string fileName = System.IO.Path.GetFileNameWithoutExtension(fullPath);
+                    assetName = fileName;
+                }
+                if (string.IsNullOrEmpty(folderPath))
+                {
+                    string dir = System.IO.Path.GetDirectoryName(fullPath)?.Replace("\\", "/");
+                    if (!string.IsNullOrEmpty(dir))
+                        folderPath = dir;
+                }
+            }
+
+            if (string.IsNullOrEmpty(folderPath))
+                folderPath = "Assets/VFX";
 
             if (string.IsNullOrEmpty(assetName))
             {
-                return VfxToolContract.Error(VfxErrorCodes.ValidationError, "assetName is required");
+                return VfxToolContract.Error(VfxErrorCodes.ValidationError,
+                    "assetName is required (or provide path e.g. 'Assets/VFX/MyEffect.vfx')");
             }
 
             if (assetName.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0)
@@ -238,36 +258,31 @@ namespace MCPForUnity.Editor.Tools.Vfx
         private static string ToProjectRelativePath(string absolutePath)
         {
             string projectPath = System.IO.Path.GetDirectoryName(Application.dataPath);
-            
-            // Handle Library/PackageCache paths
-            // Format: .../Library/PackageCache/com.package.name@version/Path...
-            // Target: Packages/com.package.name/Path...
-            if (absolutePath.Contains("Library/PackageCache/"))
+            string normalized = absolutePath.Replace("\\", "/");
+
+            if (normalized.Contains("Library/PackageCache/"))
             {
-                int index = absolutePath.IndexOf("Library/PackageCache/");
-                string relative = absolutePath.Substring(index + "Library/PackageCache/".Length);
-                
+                int index = normalized.IndexOf("Library/PackageCache/");
+                string relative = normalized.Substring(index + "Library/PackageCache/".Length);
+
                 string[] parts = relative.Split('/');
                 if (parts.Length > 0)
                 {
-                    string packageDir = parts[0];
-                    string packageName = packageDir;
+                    string packageName = parts[0];
                     if (packageName.Contains("@"))
-                    {
                         packageName = packageName.Substring(0, packageName.IndexOf("@"));
-                    }
-                    
-                    // Reconstruct path
+
                     string rest = string.Join("/", parts.Skip(1));
                     return $"Packages/{packageName}/{rest}";
                 }
             }
 
-            if (absolutePath.StartsWith(projectPath))
+            string normalizedProject = projectPath.Replace("\\", "/");
+            if (normalized.StartsWith(normalizedProject))
             {
-                return absolutePath.Substring(projectPath.Length + 1).Replace("\\", "/");
+                return normalized.Substring(normalizedProject.Length + 1);
             }
-            return absolutePath;
+            return normalized;
         }
 
         /// <summary>
@@ -275,13 +290,16 @@ namespace MCPForUnity.Editor.Tools.Vfx
         /// </summary>
         public static object AssignAsset(JObject @params)
         {
+            if (@params["target"] == null && @params["gameObjectName"] != null)
+                @params["target"] = @params["gameObjectName"];
+
             VisualEffect vfx = VfxGraphCommon.FindVisualEffect(@params);
             if (vfx == null)
             {
                 return VfxToolContract.Error(VfxErrorCodes.NotFound, "VisualEffect component not found");
             }
 
-            string assetPath = @params["assetPath"]?.ToString();
+            string assetPath = @params["assetPath"]?.ToString() ?? @params["path"]?.ToString();
             if (!VfxInputValidation.TryValidateAssetPath(assetPath, ".vfx", out assetPath, out object pathError))
             {
                 return pathError;
