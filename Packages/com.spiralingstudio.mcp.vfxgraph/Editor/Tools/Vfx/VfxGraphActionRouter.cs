@@ -56,10 +56,11 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 { "create_buffer_helper", VfxGraphEdit.CreateGraphicsBufferHelper },
                 { "setup_buffer_pipeline", VfxGraphEdit.SetupBufferPipeline },
 
-                // GPU events, space & capacity
+                // GPU events, space, capacity & data model
                 { "link_gpu_event", VfxGraphEdit.LinkGPUEvent },
                 { "set_capacity", VfxGraphEdit.SetCapacity },
                 { "set_space", VfxGraphEdit.SetSpace },
+                { "set_data_settings", VfxGraphEdit.SetDataSettings },
 
                 // Compilation
                 { "compile_graph", VfxGraphEdit.CompileGraph },
