@@ -92,19 +92,32 @@ namespace MCPForUnity.Editor.Tools.Vfx
             AddDirect("SpawnBurst", "VFXSpawnerBurst", "Single burst");
             AddDirect("PeriodicBurst", "VFXSpawnerPeriodicBurst", "Periodic bursts");
 
-            AddDirect("TriggerEventOnDie", "TriggerEventOnDie", "GPU event on death");
-            AddDirect("TriggerEventRate", "TriggerEventRate", "GPU event at rate");
-            AddDirect("TriggerEventAlways", "TriggerEventAlways", "GPU event every frame");
+            AddDirect("TriggerEventOnDie", "GPUEventOnDie", "GPU event on death");
+            AddDirect("TriggerEventRate", "GPUEventRate", "GPU event at rate");
+            AddDirect("TriggerEventAlways", "GPUEventAlways", "GPU event every frame");
+            AddDirect("SingleBurst", "VFXSpawnerBurst", "Single burst spawn");
 
             AddDirect("Orient", "Orient", "Particle orientation");
             AddDirect("FlipbookPlayer", "FlipbookPlayer", "Flipbook animation");
             AddDirect("CameraFade", "CameraFade", "Fade near camera");
-            AddDirect("SizeOverLife", "SizeOverLife", "Size over lifetime");
-            AddDirect("ColorOverLife", "ColorOverLife", "Color over lifetime");
+
+            _blockAliases["SizeOverLife"] = new BlockAlias("AttributeFromCurve",
+                "Size over lifetime (curve)",
+                new Dictionary<string, string> { { "attribute", "size" }, { "SampleMode", "OverLife" } });
+            _blockAliases["ColorOverLife"] = new BlockAlias("AttributeFromCurve",
+                "Color over lifetime (gradient)",
+                new Dictionary<string, string> { { "attribute", "color" }, { "SampleMode", "OverLife" } });
+            _blockAliases["AlphaOverLife"] = new BlockAlias("AttributeFromCurve",
+                "Alpha over lifetime (curve)",
+                new Dictionary<string, string> { { "attribute", "alpha" }, { "SampleMode", "OverLife" } });
+            _blockAliases["ScaleOverLife"] = new BlockAlias("AttributeFromCurve",
+                "Scale over lifetime (curve)",
+                new Dictionary<string, string> { { "attribute", "scale" }, { "SampleMode", "OverLife" } });
+            _blockAliases["WidthOverLife"] = new BlockAlias("AttributeFromCurve",
+                "Width/size over lifetime (for strips)",
+                new Dictionary<string, string> { { "attribute", "size" }, { "SampleMode", "OverLife" } });
 
             AddDirect("ConnectTarget", "ConnectTarget", "Connect particle strips to target");
-            AddDirect("SetStripProgress", "SetAttribute",
-                "Strip progress attribute");
             _blockAliases["SetStripProgress"] = MakeSetAttribute("stripProgress", "Overwrite");
 
             return _blockAliases;
