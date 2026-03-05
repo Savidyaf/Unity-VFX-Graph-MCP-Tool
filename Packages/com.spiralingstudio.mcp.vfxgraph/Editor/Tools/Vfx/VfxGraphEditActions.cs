@@ -362,11 +362,37 @@ namespace MCPForUnity.Editor.Tools.Vfx
             try
             {
                 var addMethod = graph.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                    .FirstOrDefault(m => m.Name == "AddCustomAttribute" || m.Name == "TryAddCustomAttribute");
+                    .Where(m => m.Name == "TryAddCustomAttribute" || m.Name == "AddCustomAttribute")
+                    .OrderByDescending(m => m.GetParameters().Length)
+                    .FirstOrDefault();
 
                 if (addMethod != null)
                 {
-                    addMethod.Invoke(graph, new object[] { attrName, ResolveVFXSlotType(attrType), description });
+                    var methodParams = addMethod.GetParameters();
+
+                    // The method's 2nd param is VFXValueType (enum), not System.Type
+                    object vfxValueType = null;
+                    if (methodParams.Length >= 2)
+                    {
+                        Type enumType = methodParams[1].ParameterType;
+                        if (enumType.IsEnum)
+                        {
+                            string enumName = ResolveVFXValueTypeName(attrType);
+                            vfxValueType = Enum.Parse(enumType, enumName, true);
+                        }
+                        else
+                            vfxValueType = ResolveVFXSlotType(attrType);
+                    }
+
+                    object[] args;
+                    if (methodParams.Length >= 5)
+                        args = new object[] { attrName, vfxValueType, description, false, null };
+                    else if (methodParams.Length >= 3)
+                        args = new object[] { attrName, vfxValueType, description };
+                    else
+                        args = new object[] { attrName, vfxValueType };
+
+                    addMethod.Invoke(graph, args);
                 }
                 else
                 {
@@ -401,6 +427,26 @@ namespace MCPForUnity.Editor.Tools.Vfx
             catch (Exception ex)
             {
                 return VfxToolContract.Error(VfxErrorCodes.InternalException, $"Error adding custom attribute: {ex.Message}");
+            }
+        }
+
+        static string ResolveVFXValueTypeName(string typeName)
+        {
+            switch (typeName.ToLowerInvariant())
+            {
+                case "float": return "Float";
+                case "float2": case "vector2": return "Float2";
+                case "float3": case "vector3": return "Float3";
+                case "float4": case "vector4": return "Float4";
+                case "int": case "int32": return "Int32";
+                case "uint": case "uint32": return "Uint32";
+                case "bool": case "boolean": return "Boolean";
+                case "color": return "Float4";
+                case "texture2d": return "Texture2D";
+                case "texture3d": return "Texture3D";
+                case "mesh": return "Mesh";
+                case "buffer": case "graphicsbuffer": return "Buffer";
+                default: return typeName;
             }
         }
 
@@ -778,7 +824,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     bool opSuccess = IsSuccessResult(opResult);
                     if (opSuccess) successCount++;
 
-                    results.Add(new { index = i, op = opName, @ref = refName, id = newId != 0 ? (int?)newId : null, success = opSuccess });
+                    if (opSuccess && newId == 0 && string.IsNullOrEmpty(refName))
+                        results.Add(new { index = i, success = true });
+                    else
+                        results.Add(new { index = i, op = opName, @ref = refName, id = newId != 0 ? (int?)newId : null, success = opSuccess });
                 }
             }
             finally
@@ -789,9 +838,41 @@ namespace MCPForUnity.Editor.Tools.Vfx
             SafeInvalidate(graph, "kStructureChanged");
             VfxGraphPersistenceService.Persist(resource);
 
+            bool allSucceeded = successCount == operations.Count;
+
+            object resultData;
+            if (allSucceeded)
+            {
+                var significantResults = results.Where(r =>
+                {
+                    var j = JObject.FromObject(r);
+                    return j["id"] != null || j["ref"]?.ToString() != null;
+                }).ToList();
+
+                resultData = new
+                {
+                    totalOperations = operations.Count,
+                    allSucceeded = true,
+                    results = significantResults.Count > 0 ? significantResults : null,
+                    refs = refMap.Count > 0 ? (object)refMap : null
+                };
+            }
+            else
+            {
+                resultData = new
+                {
+                    totalOperations = operations.Count,
+                    allSucceeded = false,
+                    succeeded = successCount,
+                    failed = operations.Count - successCount,
+                    results,
+                    refs = refMap.Count > 0 ? (object)refMap : null
+                };
+            }
+
             return VfxToolContract.Success(
                 $"Batch complete: {successCount}/{operations.Count} operations succeeded",
-                new { totalOperations = operations.Count, succeeded = successCount, failed = operations.Count - successCount, results, refs = refMap });
+                resultData);
         }
 
         static object DispatchBatchOp(string op, JObject @params)
@@ -819,6 +900,10 @@ namespace MCPForUnity.Editor.Tools.Vfx
                 case "set_hlsl_code": return SetHLSLCode(@params);
                 case "set_block_activation": return SetBlockActivation(@params);
                 case "reorder_block": return ReorderBlock(@params);
+                case "set_data_settings": return SetDataSettings(@params);
+                case "move_node": return MoveNode(@params);
+                case "duplicate_node": return DuplicateNode(@params);
+                case "remove_property": return RemoveProperty(@params);
                 default: return VfxToolContract.Error(VfxErrorCodes.UnknownAction, $"Unknown batch op: {op}");
             }
         }
@@ -842,6 +927,127 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     if (lookupKey != null) obj.Remove(lookupKey);
                 }
             }
+        }
+
+        // =====================================================================
+        // Data Object Settings (strip mode, capacity model, etc.)
+        // =====================================================================
+
+        public static object SetDataSettings(JObject @params)
+        {
+            string path = @params["path"]?.ToString();
+            int contextId = @params["contextId"]?.ToObject<int>() ?? 0;
+            JObject settings = @params["settings"] as JObject;
+
+            if (string.IsNullOrEmpty(path) || contextId == 0 || settings == null || !settings.HasValues)
+                return VfxToolContract.Error(VfxErrorCodes.ValidationError,
+                    "path, contextId, and settings (object) are required");
+
+            ScriptableObject graph = GetGraph(path, out Object resource, out string error);
+            if (graph == null)
+                return VfxToolContract.Error(VfxErrorCodes.AssetNotFound, error ?? "Could not load graph");
+
+            var models = new List<ScriptableObject>();
+            GetModelsRecursively(graph, models);
+            var context = models.FirstOrDefault(m => m.GetInstanceID() == contextId);
+            if (context == null)
+                return VfxToolContract.Error(VfxErrorCodes.NotFound, $"Context {contextId} not found");
+
+            try
+            {
+                MethodInfo getDataMethod = context.GetType().GetMethod("GetData",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null, Type.EmptyTypes, null);
+                if (getDataMethod == null)
+                    return VfxToolContract.Error(VfxErrorCodes.ValidationError,
+                        $"{context.GetType().Name} does not have a GetData() method (not a context?)");
+
+                object dataObj = getDataMethod.Invoke(context, null);
+                if (dataObj == null)
+                    return VfxToolContract.Error(VfxErrorCodes.NotFound,
+                        "GetData() returned null -- context may not own a data model yet");
+
+                var applied = new List<string>();
+                var failed = new List<string>();
+
+                foreach (var prop in settings.Properties())
+                {
+                    string settingName = prop.Name;
+                    JToken valueToken = prop.Value;
+
+                    FieldInfo field = FindSettingFieldOnObject(dataObj, settingName);
+                    if (field == null)
+                    {
+                        failed.Add($"{settingName}: field not found");
+                        continue;
+                    }
+
+                    try
+                    {
+                        object converted = ConvertDataSettingValue(field, valueToken);
+                        field.SetValue(dataObj, converted);
+                        applied.Add($"{settingName} = {converted}");
+                    }
+                    catch (Exception ex)
+                    {
+                        failed.Add($"{settingName}: {ex.Message}");
+                    }
+                }
+
+                if (applied.Count > 0)
+                {
+                    SafeInvalidate(graph, "kStructureChanged");
+                    VfxGraphPersistenceService.Persist(resource);
+                }
+
+                return VfxToolContract.Success(
+                    $"Set {applied.Count} data settings on {context.GetType().Name} ({failed.Count} failed)",
+                    new { applied, failed, dataType = dataObj.GetType().Name });
+            }
+            catch (Exception ex)
+            {
+                return VfxToolContract.Error(VfxErrorCodes.InternalException,
+                    $"Error setting data settings: {ex.Message}");
+            }
+        }
+
+        private static FieldInfo FindSettingFieldOnObject(object obj, string name)
+        {
+            Type currentType = obj.GetType();
+            while (currentType != null && currentType != typeof(ScriptableObject) && currentType != typeof(object))
+            {
+                foreach (var field in currentType.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+                {
+                    if (string.Equals(field.Name, name, StringComparison.OrdinalIgnoreCase))
+                        return field;
+                    bool hasSetting = field.GetCustomAttributes(true)
+                        .Any(a => a.GetType().Name.Contains("VFXSetting"));
+                    if (hasSetting && string.Equals(field.Name, name, StringComparison.OrdinalIgnoreCase))
+                        return field;
+                }
+                currentType = currentType.BaseType;
+            }
+            return null;
+        }
+
+        private static object ConvertDataSettingValue(FieldInfo field, JToken value)
+        {
+            Type ft = field.FieldType;
+
+            if (ft.IsEnum)
+            {
+                string strVal = value.ToString();
+                if (int.TryParse(strVal, out int intEnum))
+                    return Enum.ToObject(ft, intEnum);
+                return Enum.Parse(ft, strVal, true);
+            }
+            if (ft == typeof(int)) return value.ToObject<int>();
+            if (ft == typeof(uint)) return value.ToObject<uint>();
+            if (ft == typeof(float)) return value.ToObject<float>();
+            if (ft == typeof(bool)) return value.ToObject<bool>();
+            if (ft == typeof(string)) return value.ToString();
+
+            return value.ToObject(ft);
         }
 
         // =====================================================================
@@ -933,12 +1139,15 @@ namespace MCPForUnity.Editor.Tools.Vfx
                     };
 
                 case "particle_strip_trail":
+                    int stripCap = @params["stripCapacity"]?.ToObject<int>() ?? 4096;
+                    int perStrip = @params["particlePerStripCount"]?.ToObject<int>() ?? 32;
                     return new JArray
                     {
                         Op("add_node", "$spawn", new JObject { ["type"] = "VFXBasicSpawner", ["position"] = new JArray(-600, 0) }),
-                        Op("add_node", "$init", new JObject { ["type"] = "VFXBasicInitialize", ["position"] = new JArray(-200, 0) }),
+                        Op("add_node", "$init", new JObject { ["type"] = "VFXBasicInitialize", ["position"] = new JArray(-200, 0), ["dataType"] = "ParticleStrip" }),
+                        Op("set_data_settings", null, new JObject { ["contextId"] = "$init", ["settings"] = new JObject { ["dataType"] = 1, ["stripCapacity"] = stripCap, ["particlePerStripCount"] = perStrip } }),
                         Op("add_node", "$update", new JObject { ["type"] = "VFXBasicUpdate", ["position"] = new JArray(200, 0) }),
-                        Op("add_node", "$output", new JObject { ["type"] = "VFXOutputParticleQuadStrip", ["position"] = new JArray(600, 0) }),
+                        Op("add_node", "$output", new JObject { ["type"] = "VFXQuadStripOutput", ["position"] = new JArray(600, 0) }),
                         Op("link_contexts", null, new JObject { ["fromContextId"] = "$spawn", ["toContextId"] = "$init" }),
                         Op("link_contexts", null, new JObject { ["fromContextId"] = "$init", ["toContextId"] = "$update" }),
                         Op("link_contexts", null, new JObject { ["fromContextId"] = "$update", ["toContextId"] = "$output" }),
