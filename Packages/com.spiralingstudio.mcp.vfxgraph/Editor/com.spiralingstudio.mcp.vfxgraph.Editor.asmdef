@@ -4,7 +4,6 @@
     "references": [
         "MCPForUnity.Editor",
         "MCPForUnity.Runtime",
-        "Newtonsoft.Json",
         "Unity.RenderPipelines.Core.Runtime",
         "Unity.RenderPipelines.Universal.Runtime",
         "Unity.VisualEffectGraph.Runtime"
