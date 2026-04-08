@@ -574,10 +574,20 @@ namespace SpiralingStudio.VfxMcp.Kernel
             return "operator";
         }
 
-        // ─────────────────────────── MoveNode (Lane B B4 stub) ──────────────
+        // ─────────────────────────── MoveNode ───────────────────────────────
 
         public void MoveNode(string graphAssetPath, string token, Vector2 position)
-            => throw new System.NotImplementedException("Lane B B4 — F15 MoveNode");
+        {
+            string guid = AssetDatabase.AssetPathToGUID(graphAssetPath);
+            var model = VfxKernelContainer.Identity.Resolve(guid, token);
+            if (model == null)
+                throw new VfxIdentityException("node_lost",
+                    $"Token {token} not found in {graphAssetPath}", null);
+
+            model.position = position;
+            // Position changes don't fire kSettingChanged; the editor picks them up
+            // on the next save / asset re-import.
+        }
 
         // ─────────────────────────── Private helpers ───────────────────────
 

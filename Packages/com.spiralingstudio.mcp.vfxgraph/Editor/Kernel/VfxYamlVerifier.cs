@@ -393,6 +393,11 @@ namespace SpiralingStudio.VfxMcp.Kernel
                     case "connect":
                         VerifyConnect(op, byFileId, result);
                         break;
+                    case "move":
+                        // F15 (v0.3.1): Position drift isn't surfaced in YAML token diff
+                        // (model.position lives in m_UIPosition which the verifier doesn't
+                        // walk), so accept move ops as a no-op verifier pass.
+                        break;
                     // Other op kinds are not in lane 3B's scope; the
                     // structural diff for them lands in phase 4 with the
                     // tools that mutate them.
