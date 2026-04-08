@@ -1,18 +1,67 @@
 # Quirks.yaml — hand-authored overrides for the VFX MCP generator
 #
-# Phase 3 stub: empty. Phase 5 populates this with collision resolutions and
-# alias definitions consumed by VfxOverrides.g.cs (see Emitters/OverridesEmitter.cs).
+# Phase 5: populated with collision resolutions and alias definitions consumed
+# by VfxOverrides.g.cs (see Emitters/OverridesEmitter.cs).
 #
-# Schema (planned):
+# Schema:
 #
 #   collisions:
-#     <shortName>: <preferredFQN>
+#     <shortName>: <preferredFQN>   # which FQN wins when shortName is ambiguous
 #
 #   aliases:
-#     <alias>: <rawName>          # e.g. "type" -> "m_Type"
+#     <alias>: <rawName>            # e.g. "type" -> "m_Type" (gap #15)
 #
-#   hints:
-#     <errorCode>: <hintTemplate>
+#   defaults:
+#     <typeFqn>:
+#       <settingName>: <defaultValue>
 
-collisions: {}
-aliases: {}
+collisions:
+  # Operator namespace wins for common math/logic operators
+  Lerp: UnityEditor.VFX.Operator.Lerp
+  Add: UnityEditor.VFX.Operator.Add
+  Exp: UnityEditor.VFX.Operator.Exp
+  Log: UnityEditor.VFX.Operator.Log
+  Normalize: UnityEditor.VFX.Operator.Normalize
+  Random: UnityEditor.VFX.Operator.Random
+  RandomSelector: UnityEditor.VFX.Operator.RandomSelector
+  SampleIndex: UnityEditor.VFX.Operator.SampleIndex
+  SampleMesh: UnityEditor.VFX.Operator.SampleMesh
+  CustomHLSL: UnityEditor.VFX.Operator.CustomHLSL
+  MeshIndexCount: UnityEditor.VFX.Operator.MeshIndexCount
+  MeshTriangleCount: UnityEditor.VFX.Operator.MeshTriangleCount
+  MeshVertexCount: UnityEditor.VFX.Operator.MeshVertexCount
+  SkinnedMeshRendererTransform: UnityEditor.VFX.Operator.SkinnedMeshRendererTransform
+  PositionDepth: UnityEditor.VFX.Operator.PositionDepth
+  # Block namespace wins for update/output blocks
+  AttributeFromCurve: UnityEditor.VFX.Block.AttributeFromCurve
+  AttributeFromMap: UnityEditor.VFX.Block.AttributeFromMap
+  CollisionDepth: UnityEditor.VFX.Block.CollisionDepth
+  CollisionShape: UnityEditor.VFX.Block.CollisionShape
+  Orient: UnityEditor.VFX.Block.Orient
+  PositionMesh: UnityEditor.VFX.Block.PositionMesh
+  PositionSequential: UnityEditor.VFX.Block.PositionSequential
+  PositionShape: UnityEditor.VFX.Block.PositionShape
+  SetAttribute: UnityEditor.VFX.Block.SetAttribute
+  TriggerEvent: UnityEditor.VFX.Block.TriggerEvent
+  VFXSpawnerSetAttribute: UnityEditor.VFX.Block.VFXSpawnerSetAttribute
+  # Context/parameter namespace
+  VFXAttributeParameter: UnityEditor.VFX.VFXAttributeParameter
+  VFXBasicInitialize: UnityEditor.VFX.VFXBasicInitialize
+  VFXComposedParticleOutput: UnityEditor.VFX.VFXComposedParticleOutput
+  VFXDynamicBuiltInParameter: UnityEditor.VFX.VFXDynamicBuiltInParameter
+  VFXInlineOperator: UnityEditor.VFX.VFXInlineOperator
+  VFXSpawnerBurst: UnityEditor.VFX.VFXSpawnerBurst
+  VFXSpawnerCustomWrapper: UnityEditor.VFX.VFXSpawnerCustomWrapper
+
+aliases:
+  # gap #15: stripped-m_ short forms for m_-prefixed settings
+  type: m_Type
+  hlslCode: m_HLSLCode
+  expanded: m_Expanded
+  exposed: m_Exposed
+  name: m_Name
+  enabled: m_Enabled
+
+defaults:
+  UnityEditor.VFX.VFXInlineOperator:
+    m_Type: UnityEngine.Vector3

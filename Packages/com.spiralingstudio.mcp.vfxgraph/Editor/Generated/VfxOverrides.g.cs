@@ -2,22 +2,120 @@
 // Do not edit. Regenerate via Tools/VFX MCP/Regenerate Catalog.
 // </auto-generated>
 
+using System.Collections.Generic;
+
 namespace SpiralingStudio.VfxMcp.Generated
 {
     /// <summary>
-    /// Override layer (phase 5 will populate from Quirks.yaml + Hints.yaml).
-    /// All lookups currently return null; the kernel must fall back to the
-    /// generated catalog or default behaviour when null is returned.
+    /// Override layer baked from Quirks.yaml + Hints.yaml.
+    /// Returns null when no override exists for the given key.
     /// </summary>
     internal static class VfxOverrides
     {
+        private static readonly Dictionary<string, string> _collisions =
+            new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                { "Lerp", "UnityEditor.VFX.Operator.Lerp" },
+                { "Add", "UnityEditor.VFX.Operator.Add" },
+                { "Exp", "UnityEditor.VFX.Operator.Exp" },
+                { "Log", "UnityEditor.VFX.Operator.Log" },
+                { "Normalize", "UnityEditor.VFX.Operator.Normalize" },
+                { "Random", "UnityEditor.VFX.Operator.Random" },
+                { "RandomSelector", "UnityEditor.VFX.Operator.RandomSelector" },
+                { "SampleIndex", "UnityEditor.VFX.Operator.SampleIndex" },
+                { "SampleMesh", "UnityEditor.VFX.Operator.SampleMesh" },
+                { "CustomHLSL", "UnityEditor.VFX.Operator.CustomHLSL" },
+                { "MeshIndexCount", "UnityEditor.VFX.Operator.MeshIndexCount" },
+                { "MeshTriangleCount", "UnityEditor.VFX.Operator.MeshTriangleCount" },
+                { "MeshVertexCount", "UnityEditor.VFX.Operator.MeshVertexCount" },
+                { "SkinnedMeshRendererTransform", "UnityEditor.VFX.Operator.SkinnedMeshRendererTransform" },
+                { "PositionDepth", "UnityEditor.VFX.Operator.PositionDepth" },
+                { "AttributeFromCurve", "UnityEditor.VFX.Block.AttributeFromCurve" },
+                { "AttributeFromMap", "UnityEditor.VFX.Block.AttributeFromMap" },
+                { "CollisionDepth", "UnityEditor.VFX.Block.CollisionDepth" },
+                { "CollisionShape", "UnityEditor.VFX.Block.CollisionShape" },
+                { "Orient", "UnityEditor.VFX.Block.Orient" },
+                { "PositionMesh", "UnityEditor.VFX.Block.PositionMesh" },
+                { "PositionSequential", "UnityEditor.VFX.Block.PositionSequential" },
+                { "PositionShape", "UnityEditor.VFX.Block.PositionShape" },
+                { "SetAttribute", "UnityEditor.VFX.Block.SetAttribute" },
+                { "TriggerEvent", "UnityEditor.VFX.Block.TriggerEvent" },
+                { "VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute" },
+                { "VFXAttributeParameter", "UnityEditor.VFX.VFXAttributeParameter" },
+                { "VFXBasicInitialize", "UnityEditor.VFX.VFXBasicInitialize" },
+                { "VFXComposedParticleOutput", "UnityEditor.VFX.VFXComposedParticleOutput" },
+                { "VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter" },
+                { "VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator" },
+                { "VFXSpawnerBurst", "UnityEditor.VFX.VFXSpawnerBurst" },
+                { "VFXSpawnerCustomWrapper", "UnityEditor.VFX.VFXSpawnerCustomWrapper" },
+            };
+
+        private static readonly Dictionary<string, string> _aliases =
+            new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
+            {
+                { "type", "m_Type" },
+                { "hlslCode", "m_HLSLCode" },
+                { "expanded", "m_Expanded" },
+                { "exposed", "m_Exposed" },
+                { "name", "m_Name" },
+                { "enabled", "m_Enabled" },
+            };
+
+        private static readonly Dictionary<string, string> _hints =
+            new Dictionary<string, string>(System.StringComparer.Ordinal)
+            {
+                { "unknown_action", "Action '{action}' not recognized on tool '{tool}'. Valid actions: {valid_actions}." },
+                { "unknown_node_type", "Node type '{type}' not in catalog. Use vfx_diag.list_node_types to discover types." },
+                { "unknown_block_type", "Block type '{type}' not in catalog. Use vfx_diag.list_block_types." },
+                { "unknown_attribute", "Attribute '{name}' not registered. Use vfx_diag.list_attributes to discover attributes." },
+                { "unknown_setting", "Setting '{name}' not on {type}. Try vfx_node.get_setting with no name to enumerate settings." },
+                { "unknown_property", "Property '{name}' not on {type}. Try vfx_node.get_property with no name to enumerate slots." },
+                { "name_collision", "'{name}' is ambiguous. Candidates: {candidates}. Use the fully-qualified name." },
+                { "setting_used_as_property", "'{name}' on {type} is a setting, not a property. Use vfx_node.set_setting." },
+                { "property_used_as_setting", "'{name}' on {type} is a property, not a setting. Use vfx_node.set_property." },
+                { "slot_type_mismatch", "Slot '{slot}' expects {expected}; got {got}. {coerce_hint}" },
+                { "slot_value_invalid", "Slot '{slot}' rejected the value: {reason}." },
+                { "missing_required_param", "Missing required parameter '{param}' on action '{action}'." },
+                { "unsupported_pipeline", "Active pipeline '{active}' is not supported. Switch to URP." },
+                { "node_lost", "Token '{token}' resolved to no node. The node may have been removed. Re-fetch and retry." },
+                { "ambiguous_token", "Token '{token}' resolves to multiple candidates. Use the structural fingerprint to disambiguate." },
+                { "parent_context_invalid", "Parent token '{token}' is not a VFXContext. Blocks must be added under contexts." },
+                { "batch_ref_collision", "Batch alias '@{name}' clashes with an existing token. Choose a different alias." },
+                { "asset_not_found", "Asset at path '{path}' was not found. Use vfx_asset.list to discover assets." },
+                { "asset_pipeline_busy", "Unity is busy ({reason}). Retry after {retry_after_hint_ms}ms." },
+                { "asset_locked", "Asset at '{path}' is locked. Check version control or another editor instance." },
+                { "subgraph_not_found", "Subgraph asset at '{path}' was not found." },
+                { "subgraph_interface_changed", "Subgraph '{name}' exposed slots changed. Re-fetch get_exposed and reapply set_override values." },
+                { "subgraph_cycle_detected", "Subgraph '{name}' would introduce a cycle. Aborted." },
+                { "intent_diverged", "Recorded intent did not appear in the saved YAML. Re-fetch the graph and retry." },
+                { "compile_error", "VFX Graph compile failed with {error_count} error(s). See errors[] for details." },
+                { "vfx_exception", "Unity threw an unexpected exception inside VfxNodeOps. See message for the inner type." },
+                { "perf_budget_exceeded", "Operation took {actual_ms}ms; p95 target is {budget_ms}ms." },
+                { "catalog_stale", "Generated catalog is older than the embedded VFX Graph package. Regenerate." },
+                { "validation_error", "Validation failed: {message}." },
+                { "invalid_type_name", "Type name '{name}' could not be resolved. Pass an assembly-qualified name." },
+                { "yaml_verify_skipped", "YAML strict-match skipped: {reason}." },
+            };
+
         /// <summary>Resolve a short-name collision to a single FQN, or null when no override exists.</summary>
-        public static string ResolveCollision(string shortName) => null;
+        public static string ResolveCollision(string shortName)
+        {
+            if (shortName == null) return null;
+            return _collisions.TryGetValue(shortName, out var fqn) ? fqn : null;
+        }
 
         /// <summary>Look up a hint template for an error code, or null when none is registered.</summary>
-        public static string GetHint(string errorCode) => null;
+        public static string GetHint(string errorCode)
+        {
+            if (errorCode == null) return null;
+            return _hints.TryGetValue(errorCode, out var hint) ? hint : null;
+        }
 
         /// <summary>Look up a quirk-defined alias to its raw catalog entry, or null when none is registered.</summary>
-        public static string ResolveAlias(string alias) => null;
+        public static string ResolveAlias(string alias)
+        {
+            if (alias == null) return null;
+            return _aliases.TryGetValue(alias, out var raw) ? raw : null;
+        }
     }
 }

@@ -11,6 +11,7 @@
 
 using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
+using SpiralingStudio.VfxMcp.Generated;
 
 namespace SpiralingStudio.VfxMcp.Kernel
 {
@@ -46,7 +47,13 @@ namespace SpiralingStudio.VfxMcp.Kernel
             {
                 err["code"] = error.Code ?? "unknown_error";
                 err["message"] = error.Message ?? "";
-                err["hint"] = error.Hint ?? "";
+                // Phase 5: look up a hint from the override layer when the
+                // caller has not supplied one. Caller-supplied hints take
+                // precedence (non-null, non-empty wins).
+                string hint = error.Hint;
+                if (string.IsNullOrEmpty(hint))
+                    hint = VfxOverrides.GetHint(error.Code);
+                err["hint"] = hint ?? "";
 
                 if (error.Details != null && error.Details.Count > 0)
                     err["details"] = JObject.FromObject(error.Details);
