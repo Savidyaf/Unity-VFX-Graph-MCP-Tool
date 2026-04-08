@@ -207,7 +207,6 @@ namespace SpiralingStudio.VfxMcp.Tools
         {
             string path = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-
             string value = @params.Value<string>("value")
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
@@ -217,6 +216,19 @@ namespace SpiralingStudio.VfxMcp.Tools
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
                 VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "space", value);
+
+                scope.Record(new VfxIntentOp
+                {
+                    OpIndex       = 0,
+                    Kind          = "set_setting",
+                    ExpectedToken = "@graph",
+                    Payload       = new System.Collections.Generic.Dictionary<string, object>
+                    {
+                        ["name"]  = "space",
+                        ["value"] = value,
+                    },
+                });
+
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
@@ -224,59 +236,72 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object SetCapacity(JObject @params, bool verbose)
         {
-            string path = @params.Value<string>("graph")
-                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-
-            object value = @params["value"]?.ToObject<object>()
-                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
-
-            VfxKernelContainer.BusyGate.EnsureIdle();
-
-            string guid = AssetDatabase.AssetPathToGUID(path);
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            // F-A5 (v0.3.1): capacity is per-context (lives on VFXBasicInitialize), not on
+            // VFXGraph. Return an honest not_implemented envelope rather than dispatching
+            // through @graph (which would surface a confusing setting_not_found).
+            return VfxKernelContainer.Shaper.ShapeRead(new JObject
             {
-                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "capacity", value);
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.Shape(commit, verbose);
-            }
+                ["state"] = "not_implemented",
+                ["hint"]  = "capacity is per-context (lives on VFXBasicInitialize). " +
+                            "Use vfx_node.set_setting on the relevant initialize-context token.",
+            }, verbose);
         }
 
         private static object SetBounds(JObject @params, bool verbose)
         {
-            string path = @params.Value<string>("graph")
-                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-
-            object value = @params["value"]?.ToObject<object>()
-                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
-
-            VfxKernelContainer.BusyGate.EnsureIdle();
-
-            string guid = AssetDatabase.AssetPathToGUID(path);
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            // F-A5 (v0.3.1): bounds are per-system, not graph-level. Return an honest
+            // not_implemented envelope. Callers can flip boundsSettingMode via
+            // vfx_graph.set_data_settings, which dispatches through the @graph branch.
+            return VfxKernelContainer.Shaper.ShapeRead(new JObject
             {
-                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "boundsSettingMode", value);
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.Shape(commit, verbose);
-            }
+                ["state"] = "not_implemented",
+                ["hint"]  = "bounds are per-system. Use vfx_node.set_setting on the relevant " +
+                            "context token, or set boundsSettingMode via vfx_graph.set_data_settings.",
+            }, verbose);
         }
 
         private static object SetDataSettings(JObject @params, bool verbose)
         {
             string path = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-
             string name = @params.Value<string>("name")
                 ?? throw new VfxValidationException("missing_required_param", "name is required", null);
-
             object value = @params["value"]?.ToObject<object>()
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
+            // F-A5 (v0.3.1): conditional dispatch. If 'name' is a VFXGraph-level setting,
+            // route through the @graph branch on NodeOps.SetSetting. Otherwise the kernel
+            // throws setting_not_found and we surface an honest not_implemented envelope.
             VfxKernelContainer.BusyGate.EnsureIdle();
-
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", name, value);
+                try
+                {
+                    VfxKernelContainer.NodeOps.SetSetting(path, "@graph", name, value);
+                }
+                catch (VfxValidationException ex) when (ex.Code == "setting_not_found")
+                {
+                    return VfxKernelContainer.Shaper.ShapeRead(new JObject
+                    {
+                        ["state"] = "not_implemented",
+                        ["hint"]  = $"'{name}' is not a graph-level setting. " +
+                                    "Use vfx_node.set_setting on the relevant context/init token.",
+                    }, verbose);
+                }
+
+                scope.Record(new VfxIntentOp
+                {
+                    OpIndex       = 0,
+                    Kind          = "set_setting",
+                    ExpectedToken = "@graph",
+                    Payload       = new System.Collections.Generic.Dictionary<string, object>
+                    {
+                        ["name"]  = name,
+                        ["value"] = value,
+                    },
+                });
+
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }

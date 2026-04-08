@@ -319,6 +319,43 @@ namespace SpiralingStudio.VfxMcp.Kernel
 
         public void SetSetting(string graphAssetPath, string token, string name, object value)
         {
+            // F-A5 (v0.3.1): @graph synthetic token dispatches to the VFXGraph itself.
+            if (token == "@graph")
+            {
+                var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(graphAssetPath);
+                if (asset == null)
+                    throw new VfxValidationException("asset_not_found",
+                        $"Asset not found: {graphAssetPath}", null);
+
+                var graph = VfxMcpKernelHelpers.LoadGraphFromAsset(asset);
+                if (graph == null)
+                    throw new VfxValidationException("graph_load_failed",
+                        $"Could not load VFXGraph from {graphAssetPath}", null);
+
+                // Reuse the existing GetSettings/SetValue path on the graph itself.
+                foreach (var setting in graph.GetSettings(true, VFXSettingAttribute.VisibleFlags.Default))
+                {
+                    if (setting.name == name || setting.name == "m_" + name)
+                    {
+                        if (setting.field.FieldType == typeof(SerializableType))
+                        {
+                            var t = System.Type.GetType((string)value) ?? typeof(Vector3);
+                            setting.field.SetValue(setting.instance, (SerializableType)t);
+                        }
+                        else
+                        {
+                            setting.field.SetValue(setting.instance,
+                                System.Convert.ChangeType(value, setting.field.FieldType));
+                        }
+                        graph.Invalidate(VFXModel.InvalidationCause.kSettingChanged);
+                        return;
+                    }
+                }
+
+                throw new VfxValidationException("setting_not_found",
+                    $"VFXGraph has no setting '{name}'", null);
+            }
+
             string guid = AssetDatabase.AssetPathToGUID(graphAssetPath);
             var model = VfxKernelContainer.Identity.Resolve(guid, token);
             if (model == null)
