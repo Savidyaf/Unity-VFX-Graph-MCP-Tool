@@ -462,6 +462,82 @@ namespace SpiralingStudio.VfxMcp.Kernel
             // GetController(..., forceUpdate: true) on the next access.
         }
 
+        // ─────────────────────────── ListNodes ──────────────────────────────
+
+        public IReadOnlyList<VfxNodeListEntry> ListNodes(string graphAssetPath)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(graphAssetPath);
+            if (asset == null)
+                throw new VfxValidationException("asset_not_found",
+                    $"Asset not found: {graphAssetPath}", null);
+
+            var graph = VfxMcpKernelHelpers.LoadGraphFromAsset(asset);
+            if (graph == null)
+                throw new VfxValidationException("graph_load_failed",
+                    $"Could not load VFXGraph from {graphAssetPath}", null);
+
+            string guid = AssetDatabase.AssetPathToGUID(graphAssetPath);
+            var entries = new List<VfxNodeListEntry>();
+
+            foreach (var child in graph.children)
+            {
+                if (child == null) continue;
+
+                string token = VfxKernelContainer.Identity.Mint(guid, child);
+                string category = ClassifyTopLevel(child);
+
+                entries.Add(new VfxNodeListEntry
+                {
+                    Token       = token,
+                    TypeFqn     = child.GetType().FullName,
+                    Position    = child.position,
+                    ParentToken = null,        // top-level
+                    Category    = category,
+                    BlockIndex  = -1,
+                });
+
+                // Recurse one level into VFXContext.children for blocks.
+                if (child is VFXContext ctx)
+                {
+                    int blockIdx = 0;
+                    foreach (var block in ctx.children)
+                    {
+                        if (block == null) { blockIdx++; continue; }
+                        string blockToken = VfxKernelContainer.Identity.Mint(guid, block);
+                        entries.Add(new VfxNodeListEntry
+                        {
+                            Token       = blockToken,
+                            TypeFqn     = block.GetType().FullName,
+                            Position    = block.position,
+                            ParentToken = token,
+                            Category    = "block",
+                            BlockIndex  = blockIdx,
+                        });
+                        blockIdx++;
+                    }
+                }
+            }
+
+            // Flush sidecar so freshly minted tokens persist for the next call.
+            VfxKernelContainer.Identity.Flush();
+
+            return entries;
+        }
+
+        private static string ClassifyTopLevel(VFXModel m)
+        {
+            if (m is VFXContext)              return "context";
+            if (m is VFXParameter)            return "parameter";
+            if (m is VFXSubgraphOperator
+                || m is VFXSubgraphBlock)     return "subgraph_ref";
+            return "operator";
+        }
+
+        // ─────────────────────────── MoveNode (Lane B B4 stub) ──────────────
+
+        public void MoveNode(string graphAssetPath, string token, Vector2 position)
+            => throw new System.NotImplementedException("Lane B B4 — F15 MoveNode");
+
         // ─────────────────────────── Private helpers ───────────────────────
 
         /// <summary>

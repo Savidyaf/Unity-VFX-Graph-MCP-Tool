@@ -32,6 +32,7 @@ namespace SpiralingStudio.VfxMcp.Tools
                 bool verbose  = @params?.Value<bool?>("verbose") ?? false;
                 return action switch
                 {
+                    "list"         => List(@params, verbose),
                     "add"          => Add(@params, verbose),
                     "remove"       => Remove(@params, verbose),
                     "move"         => Move(@params, verbose),
@@ -46,7 +47,7 @@ namespace SpiralingStudio.VfxMcp.Tools
                     {
                         Code    = "unknown_action",
                         Message = $"Unknown vfx_node action '{action}'",
-                        Hint    = "Valid: add, remove, move, duplicate, connect, disconnect, " +
+                        Hint    = "Valid: list, add, remove, move, duplicate, connect, disconnect, " +
                                   "set_setting, set_property, get_setting, get_property",
                     }),
                 };
@@ -482,6 +483,48 @@ namespace SpiralingStudio.VfxMcp.Tools
                 ["token"] = token,
                 ["name"]  = name,
                 ["value"] = val != null ? JToken.FromObject(val) : JValue.CreateNull(),
+            };
+            return VfxKernelContainer.Shaper.ShapeRead(payload, verbose);
+        }
+
+        // ──────────────────────── list (read-only) ──────────────────────────
+
+        private static object List(JObject @params, bool verbose)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+            int pageSize = @params.Value<int?>("page_size") ?? 200;
+            int offset   = @params.Value<int?>("offset") ?? 0;
+
+            // Read-only — skip BusyGate and transaction.
+            var entries = VfxKernelContainer.NodeOps.ListNodes(path);
+
+            int total = entries.Count;
+            int end   = System.Math.Min(offset + pageSize, total);
+
+            var arr = new JArray();
+            for (int i = offset; i < end; i++)
+            {
+                var e = entries[i];
+                arr.Add(new JObject
+                {
+                    ["token"]        = e.Token,
+                    ["type"]         = e.TypeFqn,
+                    ["x"]            = e.Position.x,
+                    ["y"]            = e.Position.y,
+                    ["parent_token"] = e.ParentToken,
+                    ["category"]     = e.Category,
+                    ["block_index"]  = e.BlockIndex,
+                });
+            }
+
+            var payload = new JObject
+            {
+                ["graph_path"] = path,
+                ["total"]      = total,
+                ["offset"]     = offset,
+                ["page_size"]  = pageSize,
+                ["nodes"]      = arr,
             };
             return VfxKernelContainer.Shaper.ShapeRead(payload, verbose);
         }

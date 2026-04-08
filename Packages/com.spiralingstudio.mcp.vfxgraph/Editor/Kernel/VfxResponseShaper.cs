@@ -77,5 +77,9 @@ namespace SpiralingStudio.VfxMcp.Kernel
             // (filter heavy fields in terse mode, expand them in verbose).
             return payload;
         }
+
+        // ── ShapeMutation (Lane B B1 stub) ─────────────────────────────────
+        public object ShapeMutation(VfxCommitResult commit, bool verbose, JObject mutationPayload)
+            => throw new System.NotImplementedException("Lane B B1 — F5 ShapeMutation");
     }
 }
