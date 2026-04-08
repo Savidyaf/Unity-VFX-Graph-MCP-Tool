@@ -3,6 +3,10 @@
     "rootNamespace": "",
     "references": [
         "com.spiralingstudio.mcp.vfxgraph.Editor",
+        "Unity.VisualEffectGraph.Runtime",
+        "Unity.VisualEffectGraph.Editor",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Core.Editor",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],
