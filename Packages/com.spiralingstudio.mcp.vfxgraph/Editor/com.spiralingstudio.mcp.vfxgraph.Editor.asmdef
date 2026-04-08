@@ -5,8 +5,10 @@
         "MCPForUnity.Editor",
         "MCPForUnity.Runtime",
         "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Core.Editor",
         "Unity.RenderPipelines.Universal.Runtime",
-        "Unity.VisualEffectGraph.Runtime"
+        "Unity.VisualEffectGraph.Runtime",
+        "Unity.VisualEffectGraph.Editor"
     ],
     "includePlatforms": [
         "Editor"
