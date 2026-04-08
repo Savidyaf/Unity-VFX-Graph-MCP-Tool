@@ -344,8 +344,10 @@ namespace SpiralingStudio.VfxMcp.Kernel
                         }
                         else
                         {
-                            setting.field.SetValue(setting.instance,
-                                System.Convert.ChangeType(value, setting.field.FieldType));
+                            // F7: dispatch through the generated coercer catalog instead of
+                            // Convert.ChangeType, which silently drops Vector/Color/enum inputs.
+                            var coerced = VfxCoercerDispatch.Coerce(value, setting.field.FieldType);
+                            setting.field.SetValue(setting.instance, coerced);
                         }
                         graph.Invalidate(VFXModel.InvalidationCause.kSettingChanged);
                         return;
@@ -392,8 +394,10 @@ namespace SpiralingStudio.VfxMcp.Kernel
                     }
                     else
                     {
-                        setting.field.SetValue(setting.instance,
-                            System.Convert.ChangeType(value, setting.field.FieldType));
+                        // F7: dispatch through the generated coercer catalog instead of
+                        // Convert.ChangeType, which silently drops Vector/Color/enum inputs.
+                        var coerced = VfxCoercerDispatch.Coerce(value, setting.field.FieldType);
+                        setting.field.SetValue(setting.instance, coerced);
                     }
                     // Notify the graph of the setting change.
                     // VFXModel.Invalidate(InvalidationCause) — single-arg, verified VFXModel.cs
