@@ -25,9 +25,20 @@
 
 The rule is NOT "runtime never reflects." The rule is:
 
-> **No runtime reflection on `UnityEditor.VFX.*` or `UnityEngine.VFX.*` types.** The kernel calls into generated code only. Reflection on non-VFX Unity types (`UnityEditor.LogEntries`) and reflection on our own generated tool classes (for batch dispatch) are explicitly allowed and tested.
+> **No runtime reflection on `UnityEditor.VFX.*` or `UnityEngine.VFX.*` types.** The kernel calls into generated code only. Reflection on our own generated tool classes (for batch dispatch) is explicitly allowed and tested.
 
-The CHANGELOG entry (task 7-2) must match this wording. The static analyzer test (task 5-6) enforces only the VFX-type prohibition.
+**As of phase 3 integration, the kernel reaches ZERO reflection** — even on non-VFX types. `VfxConsoleReader` uses `Application.logMessageReceived` (no `LogEntries` reflection) and `VfxIdentity.LoadGraph` uses the `VfxMcpKernelHelpers` soft-fork bridge (see "Embedded VFX Graph package: TWO patch files" below). The CHANGELOG entry (task 7-2) and the no-reflection static analyzer test (task 5-6) both enforce this stricter form.
+
+### Embedded VFX Graph package: TWO patch files (updated from spec)
+
+The spec said "exactly one line" for the soft-fork patch. Phase 3 integration found a second patch is needed because `UnityEditor.VFX.VisualEffectResource` is `internal` to Unity's engine `UnityEditor.VFXModule` assembly — neither the package nor our addon can grant `InternalsVisibleTo` for it. The cleanest workaround is a small helper file that compiles INSIDE the package and exposes type-friendly bridges to the addon.
+
+| Patch file | Purpose | LOC |
+|---|---|---|
+| `Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs` | `[InternalsVisibleTo(...)]` for the addon Editor + Tests assemblies | 3 |
+| `Packages/com.unity.visualeffectgraph/Editor/VfxMcpKernelHelpers.cs` | Internal-static bridges: `LoadGraphFromAsset(VisualEffectAsset) → VFXGraph`, `CompileAndUpdateAsset(VFXGraph, VisualEffectAsset)`, `RefreshCompilationReport(VFXGraph)` | ~70 |
+
+**Maintenance policy update:** every Unity package bump must preserve BOTH files. The pre-commit hook (opt-in local) verifies both files exist. The startup sanity check `VFXLibrary.GetOperators().Any()` continues to guard the InternalsVisibleTo grant; an additional sanity check `VfxMcpKernelHelpers.LoadGraphFromAsset(testAsset) != null` guards the bridge helper. The bridges are compile-time-only — they do NOT reflect on anything. Erratum A-H3's reflection rule remains intact.
 
 ### Asset extension correction — `.vfxop` does not exist
 
@@ -4426,8 +4437,8 @@ git commit -m "Phase 7: delete legacy addon files; move VfxConsoleReader to Kern
   vfx_recipe (scaffold), vfx_batch, vfx_diag
 - Generator-driven typed catalog walking VFXLibrary.Get*() descriptors.
   **Zero runtime reflection on UnityEditor.VFX.* / UnityEngine.VFX.* types**
-  (reflection on non-VFX types and on our own generated tool classes for
-  batch dispatch is documented and tested).
+  (reflection on our own generated tool classes for batch dispatch is
+  documented and tested).
 - Sidecar + structural-fingerprint identity (no asset mutation)
 - Three-part health gate: YAML diff + compile/error-manager + console correlation
 - First-class subgraph authoring: create, add_ref, get_exposed, set_override
@@ -4437,8 +4448,14 @@ git commit -m "Phase 7: delete legacy addon files; move VfxConsoleReader to Kern
 - Performance budgets for 500-node graphs
 
 ### Changed
-- Soft-forked com.unity.visualeffectgraph via one-line InternalsVisibleTo patch
-  at Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs
+- Soft-forked com.unity.visualeffectgraph with TWO patch files:
+  - Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs
+    (InternalsVisibleTo grants for addon Editor + Tests assemblies)
+  - Packages/com.unity.visualeffectgraph/Editor/VfxMcpKernelHelpers.cs
+    (compile-time bridge for VisualEffectResource which lives in Unity
+    engine's UnityEditor.VFXModule and cannot receive an InternalsVisibleTo
+    grant from a user package — see plan errata "Embedded VFX Graph
+    package: TWO patch files" for details)
 
 ### Removed
 - Old manage_vfx mega-tool and the accidentally-bundled ParticleSystem/
