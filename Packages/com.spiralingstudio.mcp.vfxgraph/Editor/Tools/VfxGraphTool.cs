@@ -135,13 +135,13 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object CompilationStatus(JObject @params, bool verbose)
         {
-            // Read-only stub — triggering an actual compile is a mutation.
-            // Use vfx_graph.compile to force a compile pass; this action
-            // reports the last known status without re-running the compiler.
+            // F4 (v0.3.1): honest not_implemented stub. A standalone read of the
+            // last compile status without running a compile is not in v0.3.1's
+            // scope — clients should call the 'compile' action instead.
             return VfxKernelContainer.Shaper.ShapeRead(new JObject
             {
-                ["status"] = "unknown",
-                ["note"]   = "Use the 'compile' action to trigger a compile and get a fresh status.",
+                ["state"] = "not_implemented",
+                ["hint"]  = "Use the 'compile' action to trigger a compile and read its result.",
             }, verbose);
         }
 
@@ -155,19 +155,14 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object GetHealth(JObject @params, bool verbose)
         {
-            // Real health is computed inside VfxTransaction.Commit() (three-part gate).
-            // A standalone health query outside a transaction cannot run the full gate
-            // without performing a write, so we return a stub here.
-            // TODO Phase 5: wire into a lightweight read-only health probe.
+            // F4 (v0.3.1): honest not_implemented stub. Real health is computed
+            // inside VfxTransaction.Commit() (three-part gate). A standalone query
+            // outside a transaction cannot run the full gate without performing a
+            // write, so we surface this as not_implemented rather than fake data.
             return new JObject
             {
-                ["health"] = new JObject
-                {
-                    ["yaml"]    = "unknown",
-                    ["compile"] = "unknown",
-                    ["console"] = "unknown",
-                    ["note"]    = "Full health is computed per-transaction. Run a compile or save to get real data.",
-                },
+                ["state"] = "not_implemented",
+                ["hint"]  = "Health is computed per-transaction. Run a save/compile/mutate to get a real report.",
             };
         }
 
