@@ -131,5 +131,30 @@ namespace SpiralingStudio.VfxMcp.Tools.Tests
             foreach (JObject n in nodes2) s2.Add((string)n["token"]);
             Assert.IsTrue(s1.SetEquals(s2), "tokens must be stable across consecutive list calls");
         }
+
+        [Test]
+        public void GraphGetInfo_ExposesGraphMetadata()
+        {
+            var create = (JObject)VfxAssetTool.HandleCommand(JObject.FromObject(new {
+                action = "create", path = GraphPath,
+            }));
+            Assert.IsNull(create["error"]);
+
+            var info = (JObject)VfxGraphTool.HandleCommand(JObject.FromObject(new {
+                action = "get_info", graph = GraphPath,
+            }));
+            Assert.IsNull(info["error"], $"get_info failed: {info}");
+
+            // F3 expansion: these keys must exist
+            Assert.IsNotNull(info["graph_path"],          "graph_path key missing");
+            Assert.IsNotNull(info["child_count"],         "child_count key missing");
+            Assert.IsNotNull(info["space"],               "space key missing");
+            Assert.IsNotNull(info["system_count"],        "system_count key missing");
+            Assert.IsNotNull(info["bounds_setting_mode"], "bounds_setting_mode key missing");
+            Assert.IsNotNull(info["update_mode"],         "update_mode key missing");
+            // system_names is an array, may be empty for a fresh graph
+            Assert.IsNotNull(info["system_names"]);
+            Assert.IsTrue(info["system_names"] is JArray);
+        }
     }
 }

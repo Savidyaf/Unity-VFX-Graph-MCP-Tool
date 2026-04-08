@@ -95,19 +95,39 @@ namespace SpiralingStudio.VfxMcp.Tools
             UnityEditor.VFX.VFXGraph graph = UnityEditor.VFX.VfxMcpKernelHelpers.LoadGraphFromAsset(asset);
 
             int childCount = 0;
+            var systemNamesArr = new JArray();
+            var distinctSystemNames = new System.Collections.Generic.HashSet<string>();
+
             if (graph != null)
             {
                 // VFXGraph.children is a public IEnumerable<VFXModel>; we count without
                 // accessing internal members.
-                foreach (var _ in graph.children) childCount++;
+                foreach (var child in graph.children)
+                {
+                    childCount++;
+                    // F3 (v0.3.1): collect distinct system names by walking top-level
+                    // VFXContexts. VFXSystemNames.GetSystemName is a public static method
+                    // that resolves a context's system name via its parent VFXData.
+                    if (child is UnityEditor.VFX.VFXContext ctx)
+                    {
+                        string sysName = UnityEditor.VFX.VFXSystemNames.GetSystemName(ctx);
+                        if (!string.IsNullOrEmpty(sysName))
+                            distinctSystemNames.Add(sysName);
+                    }
+                }
+                foreach (var n in distinctSystemNames) systemNamesArr.Add(n);
             }
 
             var info = new JObject
             {
-                ["graph_path"]  = path,
-                ["child_count"] = childCount,
-                // TODO Phase 5: expose graph.space, graph.systemNames, graph.capacity,
-                // graph.boundsSettingMode, and data settings once public API is confirmed.
+                ["graph_path"]          = path,
+                ["child_count"]         = childCount,
+                ["system_count"]        = distinctSystemNames.Count,
+                ["system_names"]        = systemNamesArr,
+                // F3 stubs (v0.3.1) — these accessors don't exist on VFXGraph in Unity 6000.4:
+                ["space"]               = "",  // VFXCoordinateSpace lives on VFXContext, not VFXGraph
+                ["bounds_setting_mode"] = "",  // BoundsSettingMode is per-system on VFXDataParticle
+                ["update_mode"]         = "",  // No update mode property exists on VFXGraph
             };
 
             return VfxKernelContainer.Shaper.ShapeRead(info, verbose);
