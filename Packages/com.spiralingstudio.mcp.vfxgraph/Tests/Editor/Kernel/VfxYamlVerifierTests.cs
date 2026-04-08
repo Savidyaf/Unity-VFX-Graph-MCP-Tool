@@ -8,8 +8,13 @@
 // (typeFqn, structural shape), NOT by token substring. The token field on
 // VfxIntentOp is propagated only into the error envelope so the caller can
 // correlate the diagnostic back to the originating intent.
+using System.Collections.Generic;
 using System.Text;
 using NUnit.Framework;
+using SpiralingStudio.VfxMcp.Kernel;
+using UnityEditor;
+using UnityEditor.VFX;
+using UnityEngine.VFX;
 
 namespace SpiralingStudio.VfxMcp.Kernel.Tests
 {
@@ -260,6 +265,135 @@ MonoBehaviour:
                 if (System.IO.File.Exists(tempPath))
                     System.IO.File.Delete(tempPath);
             }
+        }
+
+        // ──────────────────── Task 5-7: MonoScript GUID resolver ────────────
+
+        // Phase 5-7: tests that Verify(path, intent) performs GUID->FQN
+        // resolution on real .vfx YAML (which lacks m_TypeFqn lines) so the
+        // strict-match path runs without emitting yaml_verify_skipped warnings.
+        //
+        // Strategy: create a real .vfx asset, add an operator via VfxNodeOps,
+        // save, then assert Verify() returns zero errors AND zero warnings.
+        // Uses the Assets/VfxKernelTestFixtures/ pattern from VfxCompileGateTests.
+
+        private const string GuidResolverFixtureDir  = "Assets/VfxKernelTestFixtures";
+        private const string GuidResolverFixturePath =
+            GuidResolverFixtureDir + "/VfxYamlVerifier_GuidResolver.vfx";
+
+        [Test]
+        public void Verify_OnRealVfxAsset_ResolvesGuidToFqn_NoWarningsOrErrors()
+        {
+            // ── set up ──────────────────────────────────────────────────────
+            if (!AssetDatabase.IsValidFolder(GuidResolverFixtureDir))
+                AssetDatabase.CreateFolder("Assets", "VfxKernelTestFixtures");
+
+            // Remove stale fixture.
+            if (AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(GuidResolverFixturePath) != null)
+                AssetDatabase.DeleteAsset(GuidResolverFixturePath);
+
+            VisualEffectAssetEditorUtility.CreateNew<VisualEffectAsset>(GuidResolverFixturePath);
+            var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(GuidResolverFixturePath);
+            Assert.IsNotNull(asset, "Could not create VfxYamlVerifier GUID-resolver fixture.");
+
+            string addedTypeFqn = null;
+
+            try
+            {
+                // Add one operator via VfxNodeOps (the soft-fork bridge path).
+                var graph = VfxMcpKernelHelpers.LoadGraphFromAsset(asset);
+                Assert.IsNotNull(graph, "LoadGraphFromAsset returned null.");
+
+                // Pick the first available operator FQN.
+                foreach (var desc in VFXLibrary.GetOperators())
+                {
+                    if (desc.modelType?.FullName != null)
+                    {
+                        addedTypeFqn = desc.modelType.FullName;
+                        var op = (VFXOperator)desc.CreateInstance();
+                        graph.AddChild(op);
+                        break;
+                    }
+                }
+                Assume.That(addedTypeFqn, Is.Not.Null,
+                    "VFXLibrary.GetOperators() returned no usable entries.");
+
+                EditorUtility.SetDirty(asset);
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+
+                // ── verify ─────────────────────────────────────────────────
+                var verifier = new VfxYamlVerifier();
+                var intent = new VfxIntentSnapshot
+                {
+                    Ops = new List<VfxIntentOp>
+                    {
+                        new VfxIntentOp
+                        {
+                            OpIndex = 0,
+                            Kind = "add",
+                            ExpectedToken = "n_guid_test",
+                            ExpectedTypeFqn = addedTypeFqn,
+                        },
+                    },
+                };
+
+                var result = verifier.Verify(GuidResolverFixturePath, intent);
+
+                // Zero errors: GUID resolution injected the FQN so the strict match
+                // found it in typeFqns. The file-based Verify() path never emits
+                // intent_diverged — misses produce yaml_verify_skipped. So an error
+                // here means the strict match succeeded but something is wrong upstream.
+                Assert.IsEmpty(result.Errors,
+                    $"Expected no errors after GUID resolution for {addedTypeFqn}. " +
+                    "Check that AssetDatabase.GUIDToAssetPath / MonoScript.GetClass() " +
+                    "resolved the m_Script GUID correctly.");
+
+                // Zero yaml_verify_skipped warnings: the FQN was present in the YAML
+                // (GUID resolved successfully, asset saved before Verify). If this
+                // fires, the save/refresh didn't flush the operator block to disk.
+                bool hasSkipWarning = result.Warnings.Exists(
+                    w => w.Code == "yaml_verify_skipped");
+                Assert.IsFalse(hasSkipWarning,
+                    $"yaml_verify_skipped must not appear when the resolved FQN '{addedTypeFqn}' " +
+                    "is present in the YAML. Check that AssetDatabase.SaveAssets()+Refresh() " +
+                    "flushed the operator block before Verify() was called.");
+            }
+            finally
+            {
+                // ── tear down ──────────────────────────────────────────────
+                if (AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(GuidResolverFixturePath) != null)
+                    AssetDatabase.DeleteAsset(GuidResolverFixturePath);
+
+                if (AssetDatabase.IsValidFolder(GuidResolverFixtureDir))
+                {
+                    var remaining = AssetDatabase.FindAssets(
+                        string.Empty, new[] { GuidResolverFixtureDir });
+                    if (remaining == null || remaining.Length == 0)
+                        AssetDatabase.DeleteAsset(GuidResolverFixtureDir);
+                }
+            }
+        }
+
+        [Test]
+        public void ScanMonoBehaviours_CapturesScriptGuid_FromMScriptLine()
+        {
+            // Unit test: ScanMonoBehaviours must populate YamlBlock.ScriptGuid
+            // from the m_Script line, even when m_TypeFqn is absent (production YAML).
+            string yaml = @"%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &1
+MonoBehaviour:
+  m_Script: {fileID: 11500000, guid: deadbeef1234567890abcdef12345678, type: 3}
+  m_Name: SomeOperator
+";
+            var blocks = VfxYamlVerifier.ScanMonoBehaviours(yaml);
+
+            Assert.AreEqual(1, blocks.Count);
+            Assert.AreEqual("deadbeef1234567890abcdef12345678", blocks[0].ScriptGuid,
+                "ScanMonoBehaviours must capture the GUID from the m_Script line.");
+            Assert.IsNull(blocks[0].TypeFqn,
+                "TypeFqn must be null when m_TypeFqn is absent (production YAML).");
         }
     }
 }

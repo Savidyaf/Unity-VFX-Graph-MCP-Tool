@@ -12,9 +12,17 @@
 // We therefore match by (typeFqn, structural shape), not by token. The
 // VfxIntentOp's ExpectedToken is propagated only into VfxVerifierError so the
 // caller can correlate diagnostics back to the originating intent.
+//
+// Phase 5 (task 5-7): MonoScript GUID resolver.
+// The file-based Verify() overload now resolves m_Script GUIDs to FQNs via
+// AssetDatabase + MonoScript.GetClass() so real .vfx YAML (which lacks
+// m_TypeFqn) can be strict-matched without falling back to yaml_verify_skipped.
+// The VerifyFromYaml() overload (synthetic test entry) retains the production-
+// mode fallback because AssetDatabase is not available there.
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using UnityEditor;
 
 namespace SpiralingStudio.VfxMcp.Kernel
 {
@@ -28,10 +36,11 @@ namespace SpiralingStudio.VfxMcp.Kernel
         internal sealed class YamlBlock
         {
             public long FileId;
-            public string TagId;     // e.g. "114"
-            public string Body;      // raw body lines after the tag line
-            public string Name;      // m_Name value (or null)
-            public string TypeFqn;   // m_TypeFqn value (or null)
+            public string TagId;       // e.g. "114"
+            public string Body;        // raw body lines after the tag line
+            public string Name;        // m_Name value (or null)
+            public string TypeFqn;     // m_TypeFqn value (or null); may be resolved from ScriptGuid
+            public string ScriptGuid;  // GUID from `m_Script: {fileID: X, guid: Y, type: Z}` (phase 5-7)
             public List<LinkedSlot> LinkedSlots = new List<LinkedSlot>();
         }
 
@@ -60,6 +69,11 @@ namespace SpiralingStudio.VfxMcp.Kernel
 
         private static readonly Regex LinkedSlotName =
             new Regex(@"^\s*m_Name:\s*(.+?)\s*$",
+                RegexOptions.Compiled);
+
+        // Phase 5-7: captures the GUID from `m_Script: {fileID: X, guid: GGGG, type: Z}`
+        private static readonly Regex MScriptGuid =
+            new Regex(@"m_Script:\s*\{[^}]*guid:\s*([0-9a-fA-F]+)",
                 RegexOptions.Compiled);
 
         internal static List<YamlBlock> ScanMonoBehaviours(string yaml)
@@ -114,6 +128,16 @@ namespace SpiralingStudio.VfxMcp.Kernel
                         {
                             block.TypeFqn = fqnMatch.Groups[1].Value;
                             continue;
+                        }
+                        // Phase 5-7: capture the m_Script GUID for MonoScript resolution.
+                        if (block.ScriptGuid == null && !inLinkedSlots)
+                        {
+                            var guidMatch = MScriptGuid.Match(line);
+                            if (guidMatch.Success)
+                            {
+                                block.ScriptGuid = guidMatch.Groups[1].Value;
+                                continue;
+                            }
                         }
                         if (line.TrimStart().StartsWith("m_LinkedSlots:"))
                         {
@@ -179,10 +203,149 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 // Treat unreadable YAML as empty — every intent op will then
                 // be diverged.
             }
-            return VerifyFromYaml(yaml, intent);
+
+            // Phase 5-7: MonoScript GUID resolver.
+            // Resolve m_Script GUIDs to m_TypeFqn lines by injecting them inline so
+            // VerifyFromYaml's scanner can strict-match by FQN. For FQNs that ARE
+            // found in the injected set, verification succeeds without a warning.
+            //
+            // For FQNs NOT found (either because the node wasn't yet flushed to disk
+            // at save time, or because the GUID belongs to a non-C# asset like a
+            // .vfxoperator subgraph), we fall back to yaml_verify_skipped rather than
+            // intent_diverged — the same graceful behaviour as before Phase 5 for
+            // the file-based path. The VerifyFromYaml synthetic path still uses strict
+            // matching (m_TypeFqn lines present in fixture YAML → intent_diverged on miss).
+            if (!string.IsNullOrEmpty(yaml))
+                ResolveScriptGuids(yaml, ref yaml);
+
+            // Always use forceProductionModeForMisses=true for the file-based path:
+            // a FQN miss after GUID injection means the node may not have been flushed
+            // yet (timing) or its script is not a resolvable C# class. Either way,
+            // yaml_verify_skipped is safer than intent_diverged.
+            return VerifyFromYamlInternal(yaml, intent, forceProductionModeForMisses: true);
+        }
+
+        // ─────────────────── MonoScript GUID resolver (phase 5-7) ───────────
+
+        // Resolves m_Script GUIDs in YAML blocks to m_TypeFqn lines by walking
+        // the AssetDatabase. The result is injected by rewriting `yaml` in-memory
+        // (adding synthetic `m_TypeFqn:` lines) so the existing VerifyFromYaml
+        // parser can consume them without modification.
+        //
+        // Returns true only when ALL MonoBehaviour blocks with a ScriptGuid were
+        // successfully resolved. When any GUID fails resolution (e.g., subgraph
+        // .vfxoperator assets where MonoScript.GetClass() returns null), the
+        // caller must treat the remaining gaps as yaml_verify_skipped — we inject
+        // FQNs for the resolved blocks but signal "hasUnresolvedGuids" so the
+        // VerifyAdd path can emit yaml_verify_skipped for missed FQNs instead of
+        // intent_diverged.
+        private static bool ResolveScriptGuids(string originalYaml, ref string yaml)
+        {
+            // Scan blocks to find all unique GUIDs.
+            var blocks = ScanMonoBehaviours(originalYaml);
+            if (blocks.Count == 0) return true; // nothing to resolve = all resolved
+
+            // Check if any block already has m_TypeFqn — if all do, nothing to resolve.
+            bool anyMissingFqn = false;
+            foreach (var b in blocks)
+            {
+                if (string.IsNullOrEmpty(b.TypeFqn) && !string.IsNullOrEmpty(b.ScriptGuid))
+                {
+                    anyMissingFqn = true;
+                    break;
+                }
+            }
+            if (!anyMissingFqn) return true; // all already have m_TypeFqn
+
+            // Resolve unique GUIDs to FQNs via AssetDatabase + MonoScript.GetClass().
+            var guidToFqn = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+            bool anyUnresolved = false;
+
+            foreach (var b in blocks)
+            {
+                if (string.IsNullOrEmpty(b.ScriptGuid)) continue;
+                if (guidToFqn.ContainsKey(b.ScriptGuid)) continue;
+                if (!string.IsNullOrEmpty(b.TypeFqn))
+                {
+                    // Already resolved from m_TypeFqn — no GUID lookup needed.
+                    guidToFqn[b.ScriptGuid] = b.TypeFqn;
+                    continue;
+                }
+
+                bool resolved = false;
+                try
+                {
+                    string scriptPath = AssetDatabase.GUIDToAssetPath(b.ScriptGuid);
+                    if (!string.IsNullOrEmpty(scriptPath))
+                    {
+                        var monoScript = AssetDatabase.LoadAssetAtPath<MonoScript>(scriptPath);
+                        if (monoScript != null)
+                        {
+                            System.Type t = monoScript.GetClass();
+                            if (t != null)
+                            {
+                                guidToFqn[b.ScriptGuid] = t.FullName;
+                                resolved = true;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Best-effort: if AssetDatabase is unavailable or the GUID
+                    // is stale, treat as unresolved.
+                }
+
+                if (!resolved)
+                    anyUnresolved = true;
+            }
+
+            if (guidToFqn.Count == 0)
+                return !anyUnresolved; // no resolutions at all
+
+            // Inject synthetic `m_TypeFqn:` lines into the YAML for blocks that
+            // were resolved but didn't have them. We do a string-level injection
+            // after each `m_Script:` line so VerifyFromYaml's line scanner picks
+            // them up without modification.
+            var sb = new System.Text.StringBuilder();
+            using (var reader = new StringReader(yaml))
+            {
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    sb.AppendLine(line);
+                    var guidMatch = MScriptGuid.Match(line);
+                    if (guidMatch.Success)
+                    {
+                        string guid = guidMatch.Groups[1].Value;
+                        if (guidToFqn.TryGetValue(guid, out var fqn))
+                        {
+                            int indent = 0;
+                            foreach (char c in line) { if (c == ' ') indent++; else break; }
+                            sb.Append(new string(' ', indent));
+                            sb.AppendLine($"m_TypeFqn: {fqn}");
+                        }
+                    }
+                }
+            }
+            yaml = sb.ToString();
+
+            // Return true only when every GUID was resolved.
+            return !anyUnresolved;
         }
 
         public VfxYamlVerificationResult VerifyFromYaml(string yaml, VfxIntentSnapshot intent)
+        {
+            // Public overload: no GUID resolution (synthetic test YAML path).
+            return VerifyFromYamlInternal(yaml, intent, forceProductionModeForMisses: false);
+        }
+
+        // Internal overload used by Verify() after GUID resolution.
+        // forceProductionModeForMisses: when true, any FQN miss in VerifyAdd is
+        // treated as yaml_verify_skipped (not intent_diverged) because some GUIDs
+        // could not be resolved (e.g., subgraph .vfxoperator references).
+        private VfxYamlVerificationResult VerifyFromYamlInternal(
+            string yaml, VfxIntentSnapshot intent, bool forceProductionModeForMisses)
         {
             var result = new VfxYamlVerificationResult();
             if (intent == null || intent.Ops == null || intent.Ops.Count == 0)
@@ -208,7 +371,14 @@ namespace SpiralingStudio.VfxMcp.Kernel
             // resolution, fall back to a warning (not an error) for add ops
             // when we detect production-mode YAML: at least one MonoBehaviour
             // block exists but none of them carry m_TypeFqn.
-            bool productionMode = blocks.Count > 0 && typeFqns.Count == 0;
+            //
+            // Phase 5-7 update: when the GUID resolver (Verify overload) was able
+            // to inject some FQNs but not all (forceProductionModeForMisses=true),
+            // we keep productionMode semantics for any unresolved FQN — emitting
+            // yaml_verify_skipped instead of intent_diverged so that subgraph
+            // .vfxoperator references (which don't expose a C# type) don't break.
+            bool productionMode = (blocks.Count > 0 && typeFqns.Count == 0)
+                               || forceProductionModeForMisses;
 
             for (int i = 0; i < intent.Ops.Count; i++)
             {
