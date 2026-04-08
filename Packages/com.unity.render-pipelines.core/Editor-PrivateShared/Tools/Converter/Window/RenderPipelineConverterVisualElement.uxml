@@ -1,0 +1,32 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements"
+         xmlns:uie="UnityEditor.UIElements"
+         xmlns:uir="UnityEditor.Rendering"
+         editor-extension-mode="False">
+    <uir:HeaderFoldout name="conveterFoldout">
+    <ui:VisualElement name="informationVE" class="render-pipeline-converter-information">
+        <ui:HelpBox message-type="Info" text="No items found to convert" name="noItemsFoundHelpBox" class="render-pipeline-converter-helpbox" />
+        <ui:HelpBox message-type="Info" text="Press Scan to fetch elements to convert" name="pressScanHelpBox" class="render-pipeline-converter-helpbox"/>
+        <ui:VisualElement name="listViewHeader" class="render-pipeline-converter-items-header">
+            <ui:VisualElement name="allNoneVE" class="render-pipeline-converter-all-none">
+                <ui:Label tabindex="-1" text="ALL" display-tooltip-when-elided="true" name="all" class="not_selected render-pipeline-converter-label-all" />
+                <ui:Label tabindex="-1" text="NONE" display-tooltip-when-elided="true" name="none" class="not_selected render-pipeline-converter-label-none" />
+            </ui:VisualElement>
+            <ui:Label name="converterStats" />
+            <ui:Label text="&#10;" class="render-pipeline-converter-header-label" />
+            <ui:VisualElement class="render-pipeline-converter-items-header-flexrow">
+                <ui:Image name="converterStateInfoIcon" class="render-pipeline-converter-header-image" />
+                <ui:Label tabindex="-1" display-tooltip-when-elided="true" class="render-pipeline-converter-header-label" />
+                <ui:Label name="pendingLabel" class="render-pipeline-converter-header-label-upper-center" />
+                <ui:Image name="pendingImage" class="render-pipeline-converter-header-image render-pipeline-converter-header-image-margin" />
+                <ui:Label name="warningLabel" class="render-pipeline-converter-header-label-upper-center" />
+                <ui:Image name="warningImage" class="render-pipeline-converter-header-image render-pipeline-converter-header-image-margin" />
+                <ui:Label name="errorLabel" class="render-pipeline-converter-header-label-upper-center" />
+                <ui:Image name="errorImage" class="render-pipeline-converter-header-image render-pipeline-converter-header-image-margin" />
+                <ui:Label name="successLabel" class="render-pipeline-converter-header-label-nogrow" />
+                <ui:Image name="successImage" class="render-pipeline-converter-header-image" />
+            </ui:VisualElement>
+        </ui:VisualElement>
+    </ui:VisualElement>
+    <ui:ListView focusable="true" name="converterItems" show-alternating-row-backgrounds="All" text="Info" class="render-pipeline-converter-list-view" />
+    </uir:HeaderFoldout>
+</ui:UXML>

@@ -141,7 +141,7 @@ The current tools are string-dispatched reflection wrappers. Every action is han
 | `VfxResponseShaper` | Single output chokepoint. Applies the token-savings policy to every response. |
 | `VfxTransaction` | Wraps a single call OR a batch OR an explicit save. Holds the intent snapshot for the three-part health gate at commit time. |
 | `VfxYamlVerifier` | Partial UnityYAML reader (~200 lines, version-stable, only understands node identity + slot connections + parent links). Diffs actual vs intent. **Part 1 of the health gate.** |
-| `VfxCompileGate` | After save, awaits `VisualEffectResource.CompileOrRuntimeError()`, reads `VFXErrorReporter` status, returns compile errors/warnings. **Part 2 of the health gate.** |
+| `VfxCompileGate` | After save, triggers `VFXGraph.CompileAndUpdateAsset()` (or `RecompileIfNeeded()`) on the resource's graph, then enumerates `VFXErrorManager.compileReporter.dirtyModels` and calls `GetDirtyModelErrors(model)` to harvest `ReportError` entries. **Part 2 of the health gate.** |
 | `VfxConsoleCorrelator` | Harvests console lines between pre-save and post-compile; matches warning patterns (`Remove N linked slot(s)`, `slot type mismatch`, etc.) to specific intent ops to annotate dropped connections with *why*. **Part 3 of the health gate.** |
 | `VfxBusyGate` | Precondition-checks `EditorApplication.isCompiling`, `AssetDatabase.IsAssetImportWorkerProcess`, `AssetDatabase.IsAssetImportWorkerProcess`. Every mutating action runs through `VfxBusyGate.EnsureIdle()` first. Fail-fast with `asset_pipeline_busy` + retry-after hint; no internal polling loops. |
 | `VfxConsoleReader` | Existing file; adapted so console reads return only new lines since the last successful call within the current editor process. Cursor advances on every successful read; resets on assembly reload. |
@@ -367,7 +367,7 @@ The original spec's single YAML verifier is one of three checks. All three run a
 - Subgraph interface mismatches
 - Invalid context chains
 
-**Implementation note:** VFX compilation may be asynchronous. `VfxCompileGate` uses `VisualEffectResource.CompileOrRuntimeError()` + polling `resource.runtimeErrors.Any()` with a bounded timeout (target: 2s for a 500-node graph; configurable).
+**Implementation note:** VFX compile via `VFXGraph.CompileAndUpdateAsset()` is synchronous in the editor (it's the same entry point Unity's importer uses). After the call returns, read `VFXGraph.errorManager.compileReporter` for compile-time errors: iterate `compileReporter.dirtyModels` and collect `compileReporter.GetDirtyModelErrors(model)` into a list of `ReportError`. Each `ReportError` has `model`, `type` (VFXErrorType enum), `error` (id string), and `description`. Budget target: 500ms Unity + 10ms overhead for a 500-node graph.
 
 ### Part 3 — Console correlation
 
@@ -608,10 +608,13 @@ PART 1: YAML structural diff
   → yaml_diff = {dropped_connections, drifted_slots, missing_nodes}
    ↓
 PART 2: Compile gate
-  resource = GetVisualEffectResource(graph)
-  await resource.CompileOrRuntimeError() with 2s bounded wait
-  errors = VFXErrorReporter.GetErrors(resource)
-  → compile = {errors, warnings, ms}
+  resource = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(graphPath).GetResource()
+  vfxGraph = resource.GetOrCreateGraph()
+  vfxGraph.CompileAndUpdateAsset()           // synchronous
+  errors = []
+  foreach model in vfxGraph.errorManager.compileReporter.dirtyModels:
+      errors.AddRange(vfxGraph.errorManager.compileReporter.GetDirtyModelErrors(model))
+  → compile = {errors, ms}
    ↓
 PART 3: Console correlation
   new_lines = VfxConsoleReader.ReadSincePre(transaction.pre_snapshot)
@@ -702,7 +705,6 @@ Subgraph
 Transaction
   intent_diverged      // verifier upgrades to error
   compile_error        // compile gate upgrades to error
-  compile_timeout      // compile gate exceeded 2s budget
   vfx_exception        // Unity threw — catches gap #2
 
 Performance
@@ -742,8 +744,6 @@ hints:
     template: "Batch alias @{name} collides with pre-existing token ${name}. Rename the alias."
   subgraph_interface_changed:
     template: "Subgraph {path} added/removed exposed properties. Parent refs may need updating."
-  compile_timeout:
-    template: "VFX compilation exceeded {budget_ms}ms. Graph may be too large; consider splitting into subgraphs."
   vfx_exception:
     template: "Unity raised: {inner}. This is usually a {category} issue."
 ```
@@ -766,7 +766,7 @@ The revised spec removes the "Works well list only" limit from the original. Tes
 | 6 | Identity (sidecar + fingerprint) | Mint/resolve/recover including: mid-session drift, sibling reshuffle, `Library/` deletion, assembly reload. Token never contains instance ID. | `VfxIdentityTests.cs` |
 | 7 | Token-savings policy | Terse mode strips verbose-only fields. Type legend correct. Pagination cursors round-trip. Console reader respects high-water mark. Scoped filter works on 500-node test graph. | `VfxResponseShaperTests.cs` |
 | 8 | Partial YAML verifier | Partial reader handles every node/connection shape from (4). Diff produces correct warnings on synthetic divergence. | `VfxYamlVerifierTests.cs` |
-| 9 | Compile gate | Hand-crafted graphs with known compile errors produce `compile_error`; clean graphs produce `ok`; infinite-compile case produces `compile_timeout`. | `VfxCompileGateTests.cs` |
+| 9 | Compile gate | Hand-crafted graphs with known compile errors (e.g., invalid HLSL, missing required slot) produce `compile_error` with the right `ReportError` entries; clean graphs produce `ok`. | `VfxCompileGateTests.cs` |
 | 10 | Console correlator | Hand-crafted console lines match correct intent ops; unknown lines pass through as raw. | `VfxConsoleCorrelatorTests.cs` |
 | 11 | Performance budgets | 500-node synthetic graph asserts all performance targets. | `VfxPerformanceTests.cs` |
 | 12 | Busy-editor coordination | Every mutating action fails fast with `asset_pipeline_busy` when compilation/import is simulated busy. | `VfxBusyGateTests.cs` |
