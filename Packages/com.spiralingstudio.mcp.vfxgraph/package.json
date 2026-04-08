@@ -1,6 +1,6 @@
 {
   "name": "com.spiralingstudio.mcp.vfxgraph",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "displayName": "Spiraling Studio MCP VFX Graph Tools",
   "description": "URP-first VFX Graph custom tools for MCP for Unity.",
   "unity": "2021.3",

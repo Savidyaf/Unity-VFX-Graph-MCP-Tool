@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased] - v0.3.1 read-side surface + Phase 4a correctness backlog
+## [0.3.1] - 2026-04-08
+
+v0.3.1 read-side surface + Phase 4a correctness backlog
 
 ### Added
 
