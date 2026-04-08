@@ -334,8 +334,23 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 {
                     if (setting.field.FieldType == typeof(SerializableType))
                     {
-                        // SerializableType has implicit cast from System.Type (VFXSerializer.cs)
-                        var t = System.Type.GetType((string)value) ?? typeof(Vector3);
+                        // SerializableType wraps a System.Type via implicit cast (VFXSerializer.cs).
+                        // Phase 4a F2 fix: validate strictly so a typo or wrong-typed caller can't
+                        // silently end up with the wrong type written to disk (gap #15 reintroduction).
+                        if (!(value is string typeName))
+                            throw new VfxValidationException(
+                                "invalid_type_name",
+                                $"Setting '{name}' on {model.GetType().Name} is a SerializableType " +
+                                $"and requires a string type-name; got {value?.GetType().Name ?? "null"}",
+                                null);
+                        var t = System.Type.GetType(typeName);
+                        if (t == null)
+                            throw new VfxValidationException(
+                                "invalid_type_name",
+                                $"Could not resolve type name '{typeName}' for setting '{name}' on " +
+                                $"{model.GetType().Name}. Pass an assembly-qualified name (the form " +
+                                $"returned by GetSetting on the round-trip).",
+                                null);
                         setting.field.SetValue(setting.instance, (SerializableType)t);
                     }
                     else

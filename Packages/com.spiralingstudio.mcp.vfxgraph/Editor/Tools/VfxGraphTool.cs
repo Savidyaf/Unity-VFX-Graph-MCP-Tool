@@ -201,20 +201,7 @@ namespace SpiralingStudio.VfxMcp.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                // TODO Phase 4B integration: SetSetting will be filled by Lane 4B.
-                try
-                {
-                    VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "space", value);
-                }
-                catch (System.NotImplementedException)
-                {
-                    return new JObject
-                    {
-                        ["code"]    = "not_implemented",
-                        ["message"] = "Lane 4B pending — SetSetting not yet implemented.",
-                    };
-                }
-
+                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "space", value);
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
@@ -233,20 +220,7 @@ namespace SpiralingStudio.VfxMcp.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                // TODO Phase 4B integration: SetSetting will be filled by Lane 4B.
-                try
-                {
-                    VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "capacity", value);
-                }
-                catch (System.NotImplementedException)
-                {
-                    return new JObject
-                    {
-                        ["code"]    = "not_implemented",
-                        ["message"] = "Lane 4B pending — SetSetting not yet implemented.",
-                    };
-                }
-
+                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "capacity", value);
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
@@ -265,20 +239,7 @@ namespace SpiralingStudio.VfxMcp.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                // TODO Phase 4B integration: SetSetting will be filled by Lane 4B.
-                try
-                {
-                    VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "boundsSettingMode", value);
-                }
-                catch (System.NotImplementedException)
-                {
-                    return new JObject
-                    {
-                        ["code"]    = "not_implemented",
-                        ["message"] = "Lane 4B pending — SetSetting not yet implemented.",
-                    };
-                }
-
+                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "boundsSettingMode", value);
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
@@ -300,20 +261,7 @@ namespace SpiralingStudio.VfxMcp.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                // TODO Phase 4B integration: SetSetting will be filled by Lane 4B.
-                try
-                {
-                    VfxKernelContainer.NodeOps.SetSetting(path, "@graph", name, value);
-                }
-                catch (System.NotImplementedException)
-                {
-                    return new JObject
-                    {
-                        ["code"]    = "not_implemented",
-                        ["message"] = "Lane 4B pending — SetSetting not yet implemented.",
-                    };
-                }
-
+                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", name, value);
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
