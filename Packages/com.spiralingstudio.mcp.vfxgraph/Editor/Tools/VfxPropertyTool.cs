@@ -93,14 +93,14 @@ namespace SpiralingStudio.VfxMcp.Tools
                 });
 
                 var commit = scope.Commit();
-                var shaped = VfxKernelContainer.Shaper.Shape(commit, verbose);
-                if (commit.Ok && shaped is JObject obj)
-                    obj["added"] = new JArray(new JObject
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+                {
+                    ["added"] = new JArray(new JObject
                     {
                         ["token"] = token,
                         ["type"]  = typeFqn,
-                    });
-                return shaped;
+                    }),
+                });
             }
         }
 
@@ -129,10 +129,10 @@ namespace SpiralingStudio.VfxMcp.Tools
                 });
 
                 var commit = scope.Commit();
-                var shaped = VfxKernelContainer.Shaper.Shape(commit, verbose);
-                if (commit.Ok && shaped is JObject obj)
-                    obj["removed"] = new JArray(new JObject { ["token"] = token });
-                return shaped;
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+                {
+                    ["removed"] = new JArray(new JObject { ["token"] = token }),
+                });
             }
         }
 
@@ -171,14 +171,14 @@ namespace SpiralingStudio.VfxMcp.Tools
                 });
 
                 var commit = scope.Commit();
-                var shaped = VfxKernelContainer.Shaper.Shape(commit, verbose);
-                if (commit.Ok && shaped is JObject obj)
-                    obj["set_value"] = new JObject
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+                {
+                    ["set_value"] = new JObject
                     {
                         ["token"] = token,
                         ["value"] = value?.ToString(),
-                    };
-                return shaped;
+                    },
+                });
             }
         }
 
@@ -217,14 +217,14 @@ namespace SpiralingStudio.VfxMcp.Tools
                 });
 
                 var commit = scope.Commit();
-                var shaped = VfxKernelContainer.Shaper.Shape(commit, verbose);
-                if (commit.Ok && shaped is JObject obj)
-                    obj["set_exposed"] = new JObject
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+                {
+                    ["set_exposed"] = new JObject
                     {
                         ["token"]   = token,
                         ["exposed"] = exposed,
-                    };
-                return shaped;
+                    },
+                });
             }
         }
     }

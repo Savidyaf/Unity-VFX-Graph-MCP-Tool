@@ -78,8 +78,37 @@ namespace SpiralingStudio.VfxMcp.Kernel
             return payload;
         }
 
-        // ── ShapeMutation (Lane B B1 stub) ─────────────────────────────────
+        // ── ShapeMutation (Lane B B1 — F5) ─────────────────────────────────
+        // Folds per-action mutation metadata into the commit-shaped JObject,
+        // eliminating the post-hoc `obj["added"] = ...` anti-pattern that every
+        // tool previously duplicated. Verbose-only health rule matches Shape().
         public object ShapeMutation(VfxCommitResult commit, bool verbose, JObject mutationPayload)
-            => throw new System.NotImplementedException("Lane B B1 — F5 ShapeMutation");
+        {
+            if (commit == null || !commit.Ok)
+                return ShapeError(commit?.Error);
+
+            var obj = new JObject();
+
+            // Fold mutation payload first so per-action keys appear at the top.
+            if (mutationPayload != null)
+            {
+                foreach (var prop in mutationPayload.Properties())
+                    obj[prop.Name] = prop.Value;
+            }
+
+            // Preserve commit.Diffs only if the payload didn't already supply
+            // an "added" key (avoid double-shaping).
+            if (commit.Diffs != null && commit.Diffs.Count > 0 && obj["added"] == null)
+                obj["added"] = JArray.FromObject(commit.Diffs);
+
+            if (commit.Warnings != null && commit.Warnings.Count > 0)
+                obj["warnings"] = JArray.FromObject(commit.Warnings);
+
+            // Health is verbose-only — same rule as Shape().
+            if (verbose && commit.Health != null)
+                obj["health"] = JObject.FromObject(commit.Health);
+
+            return obj;
+        }
     }
 }

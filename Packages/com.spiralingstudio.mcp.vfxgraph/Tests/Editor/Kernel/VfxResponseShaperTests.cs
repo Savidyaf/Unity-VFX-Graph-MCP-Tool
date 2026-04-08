@@ -98,5 +98,55 @@ namespace SpiralingStudio.VfxMcp.Kernel.Tests
             Assert.AreEqual("intent_diverged", (string)parsed["error"]["code"]);
             Assert.AreEqual("1 intent ops did not appear in the saved YAML.", (string)parsed["error"]["message"]);
         }
+
+        [Test]
+        public void ShapeMutation_Verbose_FoldsPayloadAndIncludesHealth()
+        {
+            var shaper = new VfxResponseShaper();
+            var commit = new VfxCommitResult
+            {
+                Ok     = true,
+                Health = new VfxHealthReport { YamlDiff = "clean", Compile = "ok", Console = "ok", CompileMs = 12, YamlBytes = 999 },
+            };
+            var payload = new JObject { ["added"] = new JArray(new JObject { ["token"] = "tok-1" }) };
+            var shaped = (JObject)shaper.ShapeMutation(commit, verbose: true, payload);
+
+            Assert.IsNotNull(shaped["added"], "verbose ShapeMutation must fold payload");
+            Assert.IsNotNull(shaped["health"], "verbose ShapeMutation must include health");
+            // VfxHealthReport fields are public C# fields; Newtonsoft's default
+            // contract keeps them as PascalCase when JObject.FromObject serializes.
+            Assert.AreEqual("clean", (string)shaped["health"]["YamlDiff"]);
+        }
+
+        [Test]
+        public void ShapeMutation_Terse_FoldsPayloadAndOmitsHealth()
+        {
+            var shaper = new VfxResponseShaper();
+            var commit = new VfxCommitResult
+            {
+                Ok     = true,
+                Health = new VfxHealthReport { YamlDiff = "clean", Compile = "ok", Console = "ok" },
+            };
+            var payload = new JObject { ["added"] = new JArray(new JObject { ["token"] = "tok-1" }) };
+            var shaped = (JObject)shaper.ShapeMutation(commit, verbose: false, payload);
+
+            Assert.IsNotNull(shaped["added"], "terse ShapeMutation must fold payload");
+            Assert.IsNull(shaped["health"], "terse ShapeMutation must NOT include health (token-savings rule)");
+        }
+
+        [Test]
+        public void ShapeMutation_Errored_DelegatesToShapeError()
+        {
+            var shaper = new VfxResponseShaper();
+            var commit = new VfxCommitResult
+            {
+                Ok    = false,
+                Error = new VfxErrorEnvelope { Code = "test_error", Message = "boom" },
+            };
+            var shaped = (JObject)shaper.ShapeMutation(commit, verbose: true, new JObject());
+
+            Assert.IsNotNull(shaped["error"]);
+            Assert.AreEqual("test_error", (string)shaped["error"]["code"]);
+        }
     }
 }

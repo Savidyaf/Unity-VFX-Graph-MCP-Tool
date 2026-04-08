@@ -179,10 +179,10 @@ namespace SpiralingStudio.VfxMcp.Tools
                 });
 
                 var commit = scope.Commit();
-                var shaped = VfxKernelContainer.Shaper.Shape(commit, verbose);
-                if (commit.Ok && shaped is JObject obj)
-                    obj["added"] = new JObject { ["token"] = token, ["subgraph"] = subgraph };
-                return shaped;
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+                {
+                    ["added"] = new JObject { ["token"] = token, ["subgraph"] = subgraph },
+                });
             }
         }
 
@@ -230,15 +230,15 @@ namespace SpiralingStudio.VfxMcp.Tools
                 });
 
                 var commit = scope.Commit();
-                var shaped = VfxKernelContainer.Shaper.Shape(commit, verbose);
-                if (commit.Ok && shaped is JObject obj)
-                    obj["set_override"] = new JObject
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+                {
+                    ["set_override"] = new JObject
                     {
                         ["token"] = token,
                         ["name"]  = name,
                         ["value"] = value?.ToString(),
-                    };
-                return shaped;
+                    },
+                });
             }
         }
     }
