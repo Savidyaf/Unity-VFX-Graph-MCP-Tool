@@ -71,5 +71,29 @@ namespace UnityEditor.VFX
             if (graph == null) return;
             graph.errorManager?.RefreshCompilationReport();
         }
+
+        // ── Asset-creation bridges (Phase 4A) ────────────────────────────────
+        // VisualEffectAssetEditorUtility is internal to this assembly; the addon
+        // assembly cannot call it directly. These bridges expose the three asset
+        // creation paths the addon needs without reflecting on VFX types.
+
+        /// <summary>
+        /// Creates a new .vfx VisualEffectAsset at the given project-relative path.
+        /// Equivalent to VisualEffectAssetEditorUtility.CreateNewAsset(path).
+        /// </summary>
+        internal static VisualEffectAsset CreateVfxAsset(string path)
+            => VisualEffectAssetEditorUtility.CreateNewAsset(path);
+
+        /// <summary>
+        /// Creates a new .vfxblock VisualEffectSubgraphBlock asset at the given path.
+        /// </summary>
+        internal static UnityEngine.Object CreateVfxSubgraphBlock(string path)
+            => VisualEffectAssetEditorUtility.CreateNew<VisualEffectSubgraphBlock>(path);
+
+        /// <summary>
+        /// Creates a new .vfxoperator VisualEffectSubgraphOperator asset at the given path.
+        /// </summary>
+        internal static UnityEngine.Object CreateVfxSubgraphOperator(string path)
+            => VisualEffectAssetEditorUtility.CreateNew<VisualEffectSubgraphOperator>(path);
     }
 }
