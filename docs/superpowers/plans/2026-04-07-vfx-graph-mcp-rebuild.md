@@ -9,8 +9,383 @@
 **Tech Stack:** Unity 6.x (6401 / 17.4.x), URP, `com.unity.visualeffectgraph` 17.4.0 (embedded, soft-forked), `com.coplaydev.unity-mcp` (host), C# 9/.NET Standard 2.1, Newtonsoft.Json 3.2.1, NUnit via Unity Test Runner.
 
 **Spec:** `docs/superpowers/specs/2026-04-07-vfx-graph-mcp-redesign.md`
-**Reviews consumed:** `docs/spec-review-vfx-graph-mcp-redesign.md`, `docs/objective-review-vfx-graph-mcp-redesign.md`
+**Reviews consumed:**
+- Spec-level: `docs/spec-review-vfx-graph-mcp-redesign.md`, `docs/objective-review-vfx-graph-mcp-redesign.md`
+- Plan-level (this plan): `docs/plan-review-vfx-graph-mcp-rebuild.md`, `docs/agent-review-vfx-graph-mcp-rebuild-plan.md`
+
 **Gaps input:** `docs/vfx_graph_mcp_tool_gaps.md`
+
+---
+
+## ERRATA & ENRICHMENTS — MUST READ BEFORE EXECUTING
+
+**Source verification date:** 2026-04-08. All findings below were verified against the embedded `com.unity.visualeffectgraph` 17.4.0 source via `mcp__jcodemunch__search_symbols` / `get_file_content`. Evidence paths are absolute. **Follow the erratum whenever the body of a task disagrees with it — the errata are authoritative.**
+
+### Terminology clarification: the reflection rule (replaces conflicting statements)
+
+The rule is NOT "runtime never reflects." The rule is:
+
+> **No runtime reflection on `UnityEditor.VFX.*` or `UnityEngine.VFX.*` types.** The kernel calls into generated code only. Reflection on non-VFX Unity types (`UnityEditor.LogEntries`) and reflection on our own generated tool classes (for batch dispatch) are explicitly allowed and tested.
+
+The CHANGELOG entry (task 7-2) must match this wording. The static analyzer test (task 5-6) enforces only the VFX-type prohibition.
+
+### Asset extension correction — `.vfxop` does not exist
+
+**Source evidence:** `Packages/com.unity.visualeffectgraph/Editor/VFXAssetEditorUtility.cs:54-55`:
+```csharp
+public const string templateBlockSubgraphAssetName = "DefaultSubgraphBlock.vfxblock";
+public const string templateOperatorSubgraphAssetName = "DefaultSubgraphOperator.vfxoperator";
+```
+
+The real asset extensions in VFX Graph 17.4.0 are **only**:
+- `.vfx`          → `VisualEffectAsset` (the main graph)
+- `.vfxblock`     → `VisualEffectSubgraphBlock` (block/context subgraph asset)
+- `.vfxoperator`  → `VisualEffectSubgraphOperator` (operator subgraph asset)
+
+**There is no `.vfxop` extension.** Every occurrence of `.vfxop` in the spec and plan is an error that must be translated to `.vfxblock` during execution. The plan's `VfxSubgraphTool` and `VfxAssetTool.Create` (task 4A-1) MUST use `.vfxblock`, not `.vfxop`.
+
+### Subgraph namespace correction
+
+**Source evidence:** all three subgraph types are in `namespace UnityEditor.VFX` directly (not nested under `.Operator.` or `.Block.`):
+- `Packages/com.unity.visualeffectgraph/Editor/Models/Operators/VFXSubgraphOperator.cs:7` → `namespace UnityEditor.VFX`
+- `Packages/com.unity.visualeffectgraph/Editor/Models/Blocks/VFXSubgraphBlock.cs:7` → `namespace UnityEditor.VFX`
+- `Packages/com.unity.visualeffectgraph/Editor/Models/Contexts/VFXSubgraphContext.cs:10` → `namespace UnityEditor.VFX`
+
+Correct FQNs:
+- `UnityEditor.VFX.VFXSubgraphOperator`  (NOT `UnityEditor.VFX.Operator.VFXSubgraphOperator`)
+- `UnityEditor.VFX.VFXSubgraphBlock`     (NOT `UnityEditor.VFX.Block.VFXSubgraphBlock`)
+- `UnityEditor.VFX.VFXSubgraphContext`
+
+**Mandatory implementation:** subgraph split in the walker (task 8) must use `typeof()` comparison, not string comparison. See B-erratum P-B5 below for the rewrite.
+
+### VFX Graph 17.4.0 API signatures (authoritative reference)
+
+| Symbol | Signature | Source |
+|---|---|---|
+| `VFXGraph.CompileAndUpdateAsset` | `internal UnityObject[] CompileAndUpdateAsset(VisualEffectAsset asset)` | `VFXGraph.cs:1464` |
+| `VFXViewController.AddVFXModel` | `public void AddVFXModel(Vector2 pos, VFXModel model)` — impl is literally `model.position = pos; this.graph.AddChild(model);` | `VFXViewController.cs:1204` |
+| `VisualEffectAssetEditorUtility.CreateNewAsset` | `public static VisualEffectAsset CreateNewAsset(string path)` — writes minimal YAML + imports | `VFXAssetEditorUtility.cs:84` |
+| `VFXSetting` | `struct` with `readonly FieldInfo field;`, `name => field?.Name ?? null`, `value => field.GetValue(instance)` | `VFXSettingAttribute.cs:48-74` |
+| `VFXModel.GetSettings` | `IEnumerable<VFXSetting> GetSettings(bool listHidden, VFXSettingAttribute.VisibleFlags flags = Default)` | `VFXModel.cs:431` |
+| `IVFXSlotContainer.inputSlots` | `ReadOnlyCollection<VFXSlot> inputSlots { get; }` (same for `outputSlots`) | `VFXSlotContainerModel.cs:12` |
+| `VFXSlot.CreateSub` | `private static VFXSlot CreateSub(VFXProperty property, Direction direction)` — uses `VFXLibrary.GetSlot(property.type)` + `property.SubProperties()` recursion | `VFXSlot.cs:372` |
+| `IVFXErrorReporter.dirtyModels` | `IEnumerable<VFXModel> dirtyModels` | `VFXErrorManager.cs:56` |
+| `IVFXErrorReporter.GetDirtyModelErrors` | `IEnumerable<ReportError> GetDirtyModelErrors(VFXModel model)` | `VFXErrorManager.cs:59` |
+
+### Pre-existing asset: `Editor/Tools/Vfx/VfxConsoleReader.cs`
+
+There is already a **working** console reader in the old file tree at `Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx/VfxConsoleReader.cs`. It uses `Application.logMessageReceived` + a 500-entry ring buffer, and the file header explicitly warns that **`UnityEditor.LogEntries` reflection is broken on Unity 6 (6000.x)**. Any plan instruction to reflect on `LogEntries` is obsolete — reuse the ring buffer pattern. The kernel version must be authored fresh (new file at `Editor/Kernel/VfxConsoleReader.cs`) but the implementation must copy the ring buffer pattern and add `GetHighWaterMark()` / `GetLinesSince(object mark)` APIs that return only log entries added since the snapshot. See erratum H1 below.
+
+### Accepted findings — patch list
+
+Each erratum below is keyed to `{source}-{id}` where source ∈ {P (plan-review), A (agent-review)}. Verdicts: **ACCEPT** = apply correction; **REJECT** = finding is wrong, keep plan as-is; **PARTIAL** = apply in spirit with modification.
+
+#### BLOCKING (must land before phase 2 starts)
+
+**P-B1 — ACCEPT.** `VFXGraph.CompileAndUpdateAsset` requires the `VisualEffectAsset` argument. Task 3C-2 `VfxCompileGate` must call `graph.CompileAndUpdateAsset(asset);` — the plan's `graph.CompileAndUpdateAsset();` (line ~2435) does not compile.
+
+**P-B2 — ACCEPT.** `VFXSetting.value` calls `field.GetValue(instance)`. For `SerializableType` fields (e.g., `VFXInlineOperator.m_Type`), this returns a `SerializableType` wrapper, not `System.Type`. Task 3A-1 walker must detect the wrapper and extract the inner type:
+
+```csharp
+object rawValue = setting.value;
+string typeFqn;
+if (rawValue is UnityEditor.VFX.SerializableType st)
+    typeFqn = ((System.Type)st)?.FullName ?? "System.Object";
+else
+    typeFqn = rawValue?.GetType().FullName ?? "System.Object";
+```
+
+`SerializableType` is at `Packages/com.unity.visualeffectgraph/Editor/Core/VFXSerializer.cs:15` — it declares `public static implicit operator SerializableType(Type value)` and the reverse conversion `Type` → `SerializableType` (and back). Cast to `Type` to extract the FQN.
+
+**P-B3 — ACCEPT.** Task 3A-2 `VfxSlotTreeBuilder` walks `type.GetFields(Instance | Public)`. VFX Graph's slot tree shape comes from `VFXProperty.SubProperties()` via `VFXLibrary.GetSlot(type)`, not from C# reflection. See `VFXSlot.cs:372 CreateSub`:
+
+```csharp
+var desc = VFXLibrary.GetSlot(property.type);
+if (desc != null) {
+    var slot = desc.CreateInstance();
+    foreach (var subInfo in property.SubProperties())
+        CreateSub(subInfo, direction);  // recursive
+}
+```
+
+**Rewrite task 3A-2** to build slot trees by walking the template instance's live `inputSlots`/`outputSlots` from `IVFXSlotContainer` and recording each slot's children via the `VFXSlot.children` property — not by reflecting on the value type's C# fields. The walker must seed the slot-tree-builder input from the same template used in task 3A-1.
+
+**P-B4 — REJECT (partial).** The reviewer claims `graph.AddChild(op)` bypasses "controller bookkeeping (undo registration, notification)." **This is empirically false.** `VFXViewController.AddVFXModel` at `VFXViewController.cs:1204` is literally:
+
+```csharp
+public void AddVFXModel(Vector2 pos, VFXModel model)
+{
+    model.position = pos;
+    this.graph.AddChild(model);
+}
+```
+
+Both paths are functionally equivalent. HOWEVER, the controller path is still preferred because it's what Unity's own UI uses (`AddVFXContext`, `AddVFXOperator`, `AddVFXParameter` all delegate to `AddVFXModel`), so future Unity changes will apply to the controller path first. **Apply as a preference, not a blocker:** task 4B-1's `AddOperator` may keep `graph.AddChild(op); op.position = pos;` — it works. For `AddVFXParameter` (task 4B-3), the default-value seeding code in the controller's `AddVFXParameter` at `VFXViewController.cs:1223` is non-trivial (sets `collapsed`, `order`, `m_ExposedName`, calls `VFXTypeExtension.GetDefaultField`); the parameter path MUST either call `controller.AddVFXParameter` or replicate that bookkeeping manually. Do not call raw `AddChild` for parameters.
+
+**P-B5 — ACCEPT.** Subgraph FQNs in the plan are wrong. Task 8's split code must not use string comparison; use `typeof()` or `IsInstanceOfType`:
+
+```csharp
+// Replace:
+foreach (var op in ir.Operators.ToArray())
+    if (op.TypeFQN == "UnityEditor.VFX.Operator.VFXSubgraphOperator") { ... }
+
+// With:
+foreach (var op in ir.Operators.ToArray())
+    if (op.ModelType == typeof(UnityEditor.VFX.VFXSubgraphOperator)) {
+        ir.SubgraphOperators.Add(op);
+        ir.Operators.Remove(op);
+    }
+```
+
+`NodeDescriptor` must be extended to carry `public System.Type ModelType { get; set; }` (currently only has `TypeFQN`). Store the live `Type` at walk time because the walker already has it from `descriptor.modelType`. Same treatment for blocks (`typeof(UnityEditor.VFX.VFXSubgraphBlock)`) and contexts (`typeof(UnityEditor.VFX.VFXSubgraphContext)`).
+
+**(NEW-1) — `.vfxop` purge.** Every reference to `.vfxop` in the plan must become `.vfxblock`. Affected locations: task 4A-1 `VfxAssetTool.Create` switch arms, task 4C-1 `VfxSubgraphTool.AddSubgraphRef` extension handling, spec-quoted snippets in decisions/flows. See the Authoritative Reference table above.
+
+#### HIGH (must land during phase 3 of the lane they affect)
+
+**P-H1 — ACCEPT + EXPAND.** Task 3C-2b's `GetEntryText` stub is dead code. The plan's entire `LogEntries`-reflection approach is obsolete because the file header of the existing `Editor/Tools/Vfx/VfxConsoleReader.cs` explicitly says it was broken on Unity 6 and replaced with a ring-buffer approach.
+
+**Rewrite task 3C-2b** to:
+1. Create `Editor/Kernel/VfxConsoleReader.cs` as a **NEW** file (do not `git mv`)
+2. Copy the ring-buffer pattern from `Editor/Tools/Vfx/VfxConsoleReader.cs`: `[InitializeOnLoad]` + `Application.logMessageReceived -= OnLogMessage; += OnLogMessage;` + `LogEntry[500] _buffer` with a write index and count
+3. Add a new `object GetHighWaterMark()` method that returns the current `_writeIndex + _count` pair (a value-type `struct Mark { public int generation; public int index; }` is cleaner)
+4. Add a new `IReadOnlyList<string> GetLinesSince(object mark)` method that returns buffer entries added since the mark. Entries older than the ring-buffer capacity are lost; document this.
+5. Delete the old file in phase 7 via `git rm` (NOT `git mv`). See erratum H4.
+6. The new file uses `Application.logMessageReceived`, **no reflection at all** — the "exception for LogEntries" in the old plan wording is unnecessary. Update task 5-6 no-reflection test to assert the kernel VfxConsoleReader contains zero reflection (not to exclude it).
+
+**P-H2 — ACCEPT.** `VFXSetting.name = field?.Name ?? null` returns C# field names (`m_Type`, `m_HLSLCode`, etc.). Task 3A-1 walker must store the raw field name in `SettingDescriptor.Name`. Task 9 (`CatalogEmitter`) must emit BOTH the raw name and a stripped short name (strip a single `m_` prefix) into the lookup dictionary. Task 5-1 `Quirks.yaml` aliases layer on top of the stripped short name. Example:
+
+```
+m_Type        → catalog internal name = "m_Type", short lookup = "type"
+m_HLSLCode    → catalog internal name = "m_HLSLCode", short lookup = "hlslCode"
+```
+
+When resolving `vfx_node.set_setting { name: "type", ... }`, the catalog tries `name`, then `m_name`, then `Quirks.yaml` alias. First hit wins.
+
+**P-H3 — ACCEPT.** Task 3B-3 recovery loop at plan line ~2172 adds all candidates without filtering. Fix:
+
+```csharp
+// Recovery path — loose match by type + parent fingerprint (spec section "Recover")
+string expectedTypeFqn = _sidecar.GetTypeFqn(graphGuid, token);  // NEW: store type at mint
+ulong expectedParentFp = _sidecar.GetParentFingerprint(graphGuid, token);  // NEW
+var matches = new List<VFXModel>();
+foreach (var candidate in WalkAllModels(graph))
+{
+    if (candidate.GetType().FullName != expectedTypeFqn) continue;
+    ulong parentFp = candidate.GetParent() != null
+        ? VfxStructuralFingerprint.Compute(graphGuid, candidate.GetParent())
+        : 0;
+    if (parentFp != expectedParentFp) continue;
+    matches.Add(candidate);
+}
+if (matches.Count == 1) { /* update sidecar, warn */ }
+else { throw new VfxIdentityException("node_lost", ...); }
+```
+
+This requires extending `VfxIdentitySidecar` to store `(Token → { Fingerprint, TypeFqn, ParentFingerprint })` instead of just `Token → Fingerprint`. **Update task 3B-2** to widen the sidecar schema accordingly. Sidecar JSON schema becomes:
+```json
+{ "version": 2, "assets": { "<guid>": { "<token>": { "fp": "<hex>", "type": "<fqn>", "parentFp": "<hex>" } } } }
+```
+Add a v1 → v2 loader that reads the old flat format and treats missing `type`/`parentFp` as null (recovery for those entries only works in the strict-match path; loose recovery throws `node_lost` until the entry is re-minted).
+
+**P-H4 — ACCEPT.** Phase 7 task 7-1 step 1 must change from `git mv` to `git rm`:
+
+```bash
+# REMOVE:
+git mv Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx/VfxConsoleReader.cs Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Kernel/VfxConsoleReader.cs
+
+# REPLACE WITH:
+git rm Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx/VfxConsoleReader.cs
+```
+
+The new kernel reader already exists (created in task 3C-2b per erratum P-H1). Phase 7 removes the legacy copy.
+
+**P-H5 — ACCEPT.** `VfxKernelContainer` initializes all services as static property initializers. Identity tests that mint/resolve tokens will leak state across tests because they all share `Library/VfxMcpIdentity.json`. **Extend task 4-SETUP** to make the container swappable:
+
+```csharp
+internal static class VfxKernelContainer
+{
+    private static VfxKernelServices s_Services = VfxKernelServices.CreateDefault();
+    public static IVfxIdentity Identity => s_Services.Identity;
+    public static IVfxYamlVerifier Verifier => s_Services.Verifier;
+    // ... etc, all backed by s_Services
+
+    internal static IDisposable Override(VfxKernelServices replacement)
+    {
+        var prev = s_Services; s_Services = replacement;
+        return new Disposer(() => s_Services = prev);
+    }
+
+    internal sealed class VfxKernelServices {
+        public IVfxIdentity Identity;
+        public IVfxYamlVerifier Verifier;
+        public IVfxCompileGate CompileGate;
+        public IVfxConsoleCorrelator Correlator;
+        public IVfxBusyGate BusyGate;
+        public IVfxNodeOps NodeOps;
+        public IVfxResponseShaper Shaper;
+        public IVfxTransaction Transaction;
+        public static VfxKernelServices CreateDefault() { /* ... the original wiring */ }
+    }
+}
+```
+
+Identity tests use `using (VfxKernelContainer.Override(services))` where `services.Identity = new VfxIdentity(new VfxIdentitySidecar(tempPath));`. Add `[SetUp]/[TearDown]` that delete the temp sidecar file per test.
+
+#### MEDIUM (land during phase 3/4 lane execution)
+
+**P-M1 — ACCEPT.** `CatalogEmitter.Emit` at plan line ~705–712 loops `foreach (var node in allNodes) sb.AppendLine(\"{{ \\\"{node.ShortName}\\\", \\\"{node.TypeFQN}\\\" }},\");`. If two types share the short name, the generated `new Dictionary<string, string> { ... }` will throw `ArgumentException` at runtime on the duplicate key. Fix by deduping at emit time:
+
+```csharp
+var seen = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+foreach (var node in allNodes)
+{
+    if (!seen.Add(node.ShortName))
+    {
+        // collision — record for Quirks.yaml and skip the later occurrence
+        sb.AppendLine($"            // collision skipped: {node.ShortName} → {node.TypeFQN}");
+        continue;
+    }
+    sb.AppendLine($"            {{ \"{node.ShortName}\", \"{node.TypeFQN}\" }},");
+}
+```
+
+A separate `VfxCatalog.Collisions` static list of `(shortName, candidateFqns)` tuples is emitted so the override layer (task 3A-7) can resolve them later. `vfx_diag.list_collisions` becomes a new diagnostic action.
+
+**P-M2 — ACCEPT.** `CoercersEmitter.EmitCompoundCoercer` at plan line ~1548 hardcodes `CoerceToFloat(arr[i])` for every child. Dispatch by child type:
+
+```csharp
+for (int i = 0; i < slot.Children.Count; i++)
+{
+    var child = slot.Children[i];
+    string coercer = DispatchCoercer(child.ChildTypeFQN);  // "CoerceToFloat" | "CoerceToVector3" | ...
+    sb.AppendLine($"                if (arr.Count > {i}) result.{child.Name} = {coercer}(arr[{i}]);");
+}
+```
+
+`DispatchCoercer` maps `System.Single`→`CoerceToFloat`, `UnityEngine.Vector3`→`CoerceToVector3`, `UnityEngine.Color`→`CoerceToColor`, etc. Since `VfxSlotTreeBuilder` already seeds nested compound types (per erratum P-B3), the recursion is safe — emit order must be: compound-of-compound's child types first (topological sort by dependency).
+
+**P-M3 — ACCEPT (covered by NEW-1 above).** `.vfxop` → `.vfxblock` everywhere in the plan.
+
+**P-M4 — ACCEPT.** Task 4A-3 `ReadConsole` at plan line ~3226 snapshots and reads in the same call — always returns 0 entries. Fix with a persistent mark in the container:
+
+```csharp
+private static object s_lastReadMark = VfxConsoleReader.GetHighWaterMark();
+
+private static object ReadConsole(JObject @params)
+{
+    var lines = VfxConsoleReader.GetLinesSince(s_lastReadMark);
+    s_lastReadMark = VfxConsoleReader.GetHighWaterMark();
+    return new JObject { ["lines"] = new JArray(lines) };
+}
+```
+
+On first call, returns everything in the ring buffer. On subsequent calls, only new lines. Mark resets on assembly reload (static field reinitializes).
+
+**P-M5 — ACCEPT.** Task 4A-1 `VfxAssetTool.Create` at plan line ~3077 uses `ScriptableObject.CreateInstance(typeof(VisualEffectAsset))`. `VisualEffectAsset` is a native Unity object (not a `ScriptableObject`), so this path fails. Use Unity's own creation helper:
+
+```csharp
+using UnityEditor.VFX;  // for VisualEffectAssetEditorUtility
+// ...
+var asset = ext switch
+{
+    ".vfx"         => (UnityEngine.Object)VisualEffectAssetEditorUtility.CreateNewAsset(path),
+    ".vfxblock"    => (UnityEngine.Object)VisualEffectAssetEditorUtility.CreateNew<VisualEffectSubgraphBlock>(path),
+    ".vfxoperator" => (UnityEngine.Object)VisualEffectAssetEditorUtility.CreateNew<VisualEffectSubgraphOperator>(path),
+    _ => throw new VfxValidationException("validation_error",
+        $"Unsupported extension: {ext}. Use .vfx, .vfxblock, or .vfxoperator.", null)
+};
+```
+
+`VisualEffectAssetEditorUtility.CreateNewAsset` at `VFXAssetEditorUtility.cs:84` writes minimal YAML (`VisualEffectResource` with an empty `VFXGraph`), imports the asset, and loads it. `CreateNew<T>` is a public generic that does the same for any `UnityObject` subtype.
+
+The `AssetDatabase.CreateAsset(...)` call in the plan is redundant and must be removed — `CreateNewAsset` already runs `AssetDatabase.ImportAsset(path)`. Follow with `AssetDatabase.SaveAssets()` if needed.
+
+**P-M6 — ACCEPT.** Every task that adds a new directory must call `AssetDatabase.Refresh()` before `git add`, so Unity generates the `.meta` files. Add an explicit step at the end of task 10 (generator creates `Editor/Generated/`), task 12 (kernel contracts create `Editor/Kernel/`), and task 4A-1/4B-1/4C-1 (tool classes create `Editor/Tools/`). Task 6-1 release-gate must include a check that every new `.cs` file has a `.meta` companion committed.
+
+#### LOW (polish)
+
+**P-L1 — ACCEPT (covered by NEW-1 and P-B5).**
+
+**P-L2 — ACCEPT.** Task 3A-8 `VfxCatalogCompletenessTests` must not hardcode `-1` for the subgraph split. Derive the expected count from the walker's own subgraph lists:
+
+```csharp
+var walkerIr = new VfxLibraryWalker().Walk();
+int expectedOperators = VFXLibrary.GetOperators().Count() - walkerIr.SubgraphOperators.Count;
+Assert.AreEqual(expectedOperators, Generated.VfxCatalog.Operators.Length);
+```
+
+**P-L3 — ACCEPT.** Task 3B-4 test comment must explicitly note that sidecar tokens never appear in YAML by design, so the token-substring check is structural (looking for the `m_Script` GUID or `!u!114` tag marker), not a token lookup.
+
+**P-L4 — ACCEPT.** `VfxErrorEnvelope.cs` is in the file list (line ~60 of this plan's file structure) but all envelope types (`VfxErrorEnvelope`, `VfxException`, `VfxValidationException`, `VfxIdentityException`, `VfxBusyException`) are actually defined inside `VfxKernelContracts.cs` (task 12). **Remove `VfxErrorEnvelope.cs` from the file structure listing.** Do not add a second file — the contracts file is the right home because the types are part of the locked interface surface.
+
+#### Agent-review (A-) findings
+
+**A-B1 — ACCEPT.** Phase 6 order is impossible: task 6-1 runs all 18 test categories (including category 15 Smoke E2E) BEFORE task 6-2 creates `VfxSmokeTests.cs`. **Fix:**
+1. Move the E2E smoke test creation from task 6-2 into a new task `4-SMOKE` that runs at the end of phase 4 (after all three lanes land). This gives phase 4a's code reviewer a real integration test to review and lets phase 5 use the smoke as a reference signal.
+2. Task 6-1 then re-runs all test categories; `VfxSmokeTests.cs` already exists.
+3. Task 6-2 becomes "verify the smoke test still passes after phase 5 quirks/hints population."
+
+**A-B2 — ACCEPT (merged with P-H1/P-H4).** The VfxConsoleReader migration has exactly one path: phase 3C-2b creates a **new** file at `Editor/Kernel/VfxConsoleReader.cs` using the ring-buffer pattern from the existing old file (but with new high-water-mark APIs); phase 7-1 runs `git rm` on the old `Editor/Tools/Vfx/VfxConsoleReader.cs` without mv.
+
+**A-H1 — PARTIAL REJECT.** Tool-naming claim is mostly wrong: `mcp__UnityMCP__run_tests`, `mcp__UnityMCP__read_console`, `mcp__UnityMCP__execute_menu_item`, and `Read` ARE all current tool names (verified against the live deferred-tool list at session start). The reviewer may have been looking at a different environment. **Do not rename tools.** However, two ACCEPTED sub-findings:
+1. `find Packages/... -name "*.asmdef"` at plan line ~212 should use `Glob` with pattern `Packages/com.spiralingstudio.mcp.vfxgraph/**/*.asmdef` per CLAUDE.md "use jcodemunch/Glob, never shell find."
+2. `mcp__UnityMCP__execute_menu_item` takes parameter `menu_path` (not `menu_item`). Update plan task 10 step 2 accordingly. *(Verification deferred to implementation time — use the actual schema surfaced in the executing session.)*
+
+**A-H2 — ACCEPT (narrow the claim).** `vfx_subgraph.inline` and `vfx_subgraph.extract` are not shipped in v0.3.0 — task 4C-1 explicitly throws `NotImplementedException("v0.3.1")`. The CHANGELOG (task 7-2) and the top of this plan must NOT claim "production-ready subgraph support with full inline/extract." **Revise claim to:** "first-class subgraph authoring: create, add_ref, get_exposed, set_override. Non-destructive refactoring (inline / extract) is deferred to v0.3.1." Phase 4a review criteria #10 is updated to enforce only shipped actions.
+
+**A-H3 — ACCEPT (covered by the reflection-rule clarification at the top of ERRATA).**
+
+**A-M1 — ACCEPT.** Self-containment:
+1. The dead reference to `task 4A-X` at plan line ~3451 is renamed to `task 4-SMOKE` (per A-B1).
+2. The referenced review docs now exist: `docs/spec-review-vfx-graph-mcp-redesign.md` and `docs/objective-review-vfx-graph-mcp-redesign.md` (check before execution; they were restored per git log).
+3. The Performance Budgets and Release Gate tables from the spec are inlined into phase 5 and phase 6 below. Agents executing those phases no longer need to cross-load the spec.
+
+### Inlined spec excerpts (for self-contained execution of phases 5/6)
+
+**Spec — Performance Budgets (inlined for phase 5 task 5-3):**
+
+| Operation | p95 target |
+|---|---|
+| Single-call mutation (`vfx_node.add`) | < 100 ms |
+| Single-call read (`vfx_graph.get_info`, 500 nodes) | < 150 ms |
+| Single-call read (scoped filter) | < 50 ms |
+| Batch commit (20 ops, 500 nodes) | < 300 ms + Unity save/compile |
+| Identity token resolve | < 5 ms |
+| Identity recovery walk | < 20 ms |
+| Part 1: YAML structural diff (500 nodes) | < 100 ms |
+| Part 2: Compile gate (500 nodes, cache warm) | < 500 ms Unity + 10 ms overhead |
+| Part 3: Console correlation | < 20 ms |
+| Token-savings shaping | < 10 ms |
+| Catalog regeneration (full walk) | < 30 s (dev-time) |
+
+**Spec — Release gate criteria (inlined for phase 6 task 6-1):** All 13 criteria from the spec "Production-ready release gate" section must pass:
+1. Test categories 1–18 all green.
+2. Generated catalog count matches `VFXLibrary.Get*().Count()` exactly (guards InternalsVisibleTo patch).
+3. Zero runtime reflection on `UnityEditor.VFX.*` / `UnityEngine.VFX.*` types (enforced by category 18).
+4. Performance budgets met on the 500-node synthetic graph (category 11).
+5. Three-part health gate passes on the smoke E2E (category 15) with zero warnings.
+6. Subgraph lifecycle E2E (category 14) passes incl. `subgraph_interface_changed` detection.
+7. Identity sidecar survives all drift scenarios in category 6.
+8. Override layer populated (`Quirks.yaml` non-empty; every collision resolved).
+9. `Hints.yaml` has a template for every error code.
+10. All 9 tools discoverable via MCP tool listing with typed schemas from `VfxToolSchemas.g.cs`. **Shipped actions only** — deferred actions must not be in the schema (per A-H2).
+11. `Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs` committed; startup sanity check passes.
+12. CHANGELOG entry forward-links `docs/vfx_graph_mcp_tool_gaps.md` + 4 review docs.
+13. Phase 4a code review passes.
+
+### Execution order map — updated
+
+| Phase | Gate before proceeding |
+|---|---|
+| 1 | Errata read; InternalsVisibleTo patch + smoke test green |
+| 2 | Baseline catalog generated and compiles |
+| 3 | Interface contracts locked; all 4 lanes green; P-B1, P-B2, P-B3, P-B5, P-H2, P-H3, P-H5 land with their tasks |
+| 4 | All 9 tools land; P-B4/P-M3/P-M5 land with their tasks; **task 4-SMOKE** builds `VfxSmokeTests.cs` before phase 4a |
+| 4a | Code review explicitly validates every BLOCKING/HIGH erratum is resolved |
+| 5 | Quirks + hints populated; perf + busy tests; no-reflection analyzer |
+| 6 | Full release gate (13 criteria) including smoke test re-run |
+| 7 | Cleanup: `git rm` old VfxConsoleReader (not mv); delete legacy files; bump to 0.3.0 |
 
 ---
 
@@ -56,7 +431,7 @@ Editor/
 │   ├── VfxCompileGate.cs
 │   ├── VfxConsoleCorrelator.cs
 │   ├── VfxBusyGate.cs
-│   ├── VfxConsoleReader.cs           (moved from Tools/Vfx/, adapted)
+│   ├── VfxConsoleReader.cs           (NEW in Kernel/; ring buffer pattern, see erratum P-H1. Phase 7 `git rm`s the old Tools/Vfx/ file; NOT a `git mv`.)
 │   └── VfxErrorEnvelope.cs           (error code + shape)
 ├── Tools/                            (NEW — 9 MCP tool classes, flat)
 │   ├── VfxAssetTool.cs
@@ -107,9 +482,7 @@ Tests/
 - `Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs` (new file, 2 lines)
 
 **Deleted in phase 7:**
-All 30 files under old `Editor/Tools/Vfx/` except:
-- `VfxConsoleReader.cs` (moved to `Kernel/` in phase 2)
-- 5 existing test files (deleted; replaced with new test files)
+All 30+ files under old `Editor/Tools/Vfx/`, **including `VfxConsoleReader.cs`** (removed via `git rm`; its replacement already exists at `Editor/Kernel/VfxConsoleReader.cs`, created fresh in phase 3C-2b per erratum P-H1). 5 existing test files deleted; replaced with new test files.
 
 ---
 
@@ -209,7 +582,7 @@ git commit -m "Add InternalsVisibleTo patch for VFX Graph addon access"
 
 - [ ] **Step 1: Find the addon's editor asmdef**
 
-Run: `find Packages/com.spiralingstudio.mcp.vfxgraph -name "*.asmdef"`
+Per erratum A-H1 / CLAUDE.md, do NOT use shell `find`. Use the `Glob` tool with pattern `Packages/com.spiralingstudio.mcp.vfxgraph/**/*.asmdef`, or `mcp__jcodemunch__search_text` with `file_pattern: "**/*.asmdef"`.
 Expected: one or more asmdef paths.
 
 - [ ] **Step 2: Read the current asmdef**
@@ -344,6 +717,8 @@ namespace SpiralingStudio.VfxMcp.Generation
 
     internal sealed class NodeDescriptor
     {
+        // ERRATUM P-B5: carry the live Type so subgraph split + walker use typeof() instead of strings.
+        public System.Type ModelType { get; set; }
         public string TypeFQN { get; set; }         // "UnityEditor.VFX.Operator.Lerp"
         public string ShortName { get; set; }        // "Lerp"
         public string Category { get; set; }         // "Math/Basic"
@@ -562,22 +937,22 @@ public CatalogIR Walk()
     foreach (var d in VFXLibrary.GetParameters())
         ir.Parameters.Add(MakeDescriptor(d.modelType, d.category));
 
-    // Subgraphs live alongside regular descriptors in VFXLibrary; split them
-    // out by concrete type.
+    // ERRATUM P-B5: subgraphs are in namespace UnityEditor.VFX (NOT .Operator./.Block.).
+    // Use typeof() comparison, not strings. NodeDescriptor carries the live Type now.
     foreach (var op in ir.Operators.ToArray())
-        if (op.TypeFQN == "UnityEditor.VFX.Operator.VFXSubgraphOperator")
+        if (op.ModelType == typeof(UnityEditor.VFX.VFXSubgraphOperator))
         {
             ir.SubgraphOperators.Add(op);
             ir.Operators.Remove(op);
         }
     foreach (var blk in ir.Blocks.ToArray())
-        if (blk.TypeFQN == "UnityEditor.VFX.Block.VFXSubgraphBlock")
+        if (blk.ModelType == typeof(UnityEditor.VFX.VFXSubgraphBlock))
         {
             ir.SubgraphBlocks.Add(blk);
             ir.Blocks.Remove(blk);
         }
     foreach (var ctx in ir.Contexts.ToArray())
-        if (ctx.TypeFQN == "UnityEditor.VFX.VFXSubgraphContext")
+        if (ctx.ModelType == typeof(UnityEditor.VFX.VFXSubgraphContext))
         {
             ir.SubgraphContexts.Add(ctx);
             ir.Contexts.Remove(ctx);
@@ -590,6 +965,7 @@ private static NodeDescriptor MakeDescriptor(System.Type modelType, string categ
 {
     return new NodeDescriptor
     {
+        ModelType = modelType,          // ERRATUM P-B5: store live Type for typeof()-based split
         TypeFQN = modelType.FullName,
         ShortName = modelType.Name,
         Category = category ?? "",
@@ -598,7 +974,7 @@ private static NodeDescriptor MakeDescriptor(System.Type modelType, string categ
 }
 ```
 
-Note: the exact subgraph FQNs may differ slightly (verify with the generator self-compile check). The implementer should run the walker, list all FQNs, and correct the split rules if mismatched.
+Per erratum P-B5: `NodeDescriptor` must carry `public System.Type ModelType { get; set; }`. Update `CatalogIR.cs` (task 6) to add this field; it's the authoritative split key. The string `TypeFQN` is still kept for emission into generated code, but all runtime comparisons use the live `Type`.
 
 - [ ] **Step 3: Run tests and verify all pass**
 
@@ -701,14 +1077,42 @@ namespace SpiralingStudio.VfxMcp.Generation
             EmitArray(sb, "SubgraphBlocks", ir.SubgraphBlocks.Select(o => o.TypeFQN));
             EmitArray(sb, "SubgraphContexts", ir.SubgraphContexts.Select(o => o.TypeFQN));
 
-            // Short-name → FQN lookup (for name resolution)
+            // ERRATUM P-M1: deduplicate short names to avoid dictionary ArgumentException
+            // at runtime on collision (e.g. Lerp vs UIElements.Experimental.Lerp).
+            // Collisions are recorded into a separate table for the override layer + vfx_diag.
             sb.AppendLine("        public static readonly System.Collections.Generic.Dictionary<string, string> ShortNameToFqn = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)");
             sb.AppendLine("        {");
             var allNodes = ir.Operators.Concat(ir.Blocks).Concat(ir.Contexts).Concat(ir.Parameters)
                 .Concat(ir.SubgraphOperators).Concat(ir.SubgraphBlocks).Concat(ir.SubgraphContexts)
-                .OrderBy(n => n.TypeFQN, System.StringComparer.Ordinal);
+                .OrderBy(n => n.TypeFQN, System.StringComparer.Ordinal)
+                .ToList();
+            var seen = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+            var collisions = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(System.StringComparer.OrdinalIgnoreCase);
             foreach (var node in allNodes)
+            {
+                // ERRATUM P-H2: also emit a stripped short name (drop single "m_" prefix on settings).
+                // For type short-names, m_ is rare but we still dedupe case-insensitively.
+                if (!seen.Add(node.ShortName))
+                {
+                    if (!collisions.TryGetValue(node.ShortName, out var list))
+                        collisions[node.ShortName] = list = new System.Collections.Generic.List<string>();
+                    list.Add(node.TypeFQN);
+                    sb.AppendLine($"            // collision (resolved in Quirks.yaml): {node.ShortName} → {node.TypeFQN}");
+                    continue;
+                }
                 sb.AppendLine($"            {{ \"{node.ShortName}\", \"{node.TypeFQN}\" }},");
+            }
+            sb.AppendLine("        };");
+
+            // Emit collision table so VfxOverrides / vfx_diag.list_collisions can surface them
+            sb.AppendLine();
+            sb.AppendLine("        public static readonly System.Collections.Generic.Dictionary<string, string[]> Collisions = new System.Collections.Generic.Dictionary<string, string[]>(System.StringComparer.OrdinalIgnoreCase)");
+            sb.AppendLine("        {");
+            foreach (var kv in collisions.OrderBy(k => k.Key, System.StringComparer.Ordinal))
+            {
+                var fqns = string.Join(", ", kv.Value.Select(f => $"\"{f}\""));
+                sb.AppendLine($"            {{ \"{kv.Key}\", new string[] {{ {fqns} }} }},");
+            }
             sb.AppendLine("        };");
 
             sb.AppendLine("    }");
@@ -1218,12 +1622,30 @@ private static NodeDescriptor MakeDescriptor(System.Type modelType, string categ
 
     foreach (var setting in template.GetSettings(listHidden: true))
     {
+        // ERRATUM P-B2: setting.value returns raw FieldInfo.GetValue, which for
+        // SerializableType-typed fields is the wrapper struct, not a Type.
+        // Unwrap via the implicit SerializableType↔Type conversion.
+        // Source: VFXSerializer.cs:15 (SerializableType has implicit operator Type)
+        object rawValue = setting.value;
+        string typeFqn;
+        if (rawValue is UnityEditor.VFX.SerializableType st)
+        {
+            var inner = (System.Type)st;
+            typeFqn = inner?.FullName ?? "System.Object";
+        }
+        else
+        {
+            typeFqn = rawValue?.GetType().FullName
+                   ?? setting.field?.FieldType.FullName
+                   ?? "System.Object";
+        }
+
         desc.Settings.Add(new SettingDescriptor
         {
-            Name = setting.name,
-            TypeFQN = setting.value?.GetType().FullName ?? "System.Object",
+            Name = setting.name,               // raw C# name: "m_Type", "m_HLSLCode" (P-H2)
+            TypeFQN = typeFqn,
             DefaultLiteral = null,
-            IsHidden = false, // refine in task 3A-2
+            IsHidden = (setting.visibility & UnityEditor.VFX.VFXSettingAttribute.VisibleFlags.InInspector) == 0,
         });
     }
 
@@ -1312,16 +1734,21 @@ namespace SpiralingStudio.VfxMcp.Generation.Tests
 
 ```csharp
 // Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Generation/VfxSlotTreeBuilder.cs
+// ERRATUM P-B3: slot tree shape MUST come from VFXProperty.SubProperties() via
+// VFXLibrary.GetSlot(property.type) — NOT C# reflection on struct fields.
+// Source: Packages/com.unity.visualeffectgraph/Editor/Models/Slots/VFXSlot.cs:372 CreateSub
+//
+// For leaf types (float, Texture2D, GraphicsBuffer) we still identify them by type.
+// For compound types (Vector3, Color, Transform, Sphere, AABox, OrientedBox, …) we
+// instantiate a template VFXSlot via VFXLibrary.GetSlot(type).CreateInstance() and
+// walk VFXSlot.children — the authoritative decomposition source.
 using System;
 using System.Collections.Generic;
-using System.Reflection;
+using System.Linq;
+using UnityEditor.VFX;
 
 namespace SpiralingStudio.VfxMcp.Generation
 {
-    /// <summary>
-    /// Walks compound Unity/VFX struct types (Vector3, Color, Transform, Sphere,
-    /// AABox, etc.) and records their child-field shape for compound coercers.
-    /// </summary>
     internal sealed class VfxSlotTreeBuilder
     {
         private static readonly HashSet<Type> LeafTypes = new()
@@ -1332,29 +1759,47 @@ namespace SpiralingStudio.VfxMcp.Generation
             typeof(UnityEngine.GraphicsBuffer),
         };
 
-        public void Build(CatalogIR ir, IEnumerable<Type> types)
+        /// <summary>
+        /// Walks slot types reachable from the given templates (operator/block/context
+        /// instances already created by the walker). For each template, we iterate
+        /// IVFXSlotContainer.inputSlots + outputSlots and recursively descend via
+        /// VFXSlot.children, which is VFX Graph's authoritative decomposition.
+        /// </summary>
+        public void BuildFromTemplates(CatalogIR ir, IEnumerable<VFXModel> templates)
         {
-            var seen = new HashSet<string>();
-            foreach (var type in types)
-                BuildOne(ir, type, seen);
+            var seenSlotTypes = new HashSet<string>();
+            foreach (var template in templates)
+            {
+                if (template is IVFXSlotContainer container)
+                {
+                    foreach (var slot in container.inputSlots) VisitSlot(ir, slot, seenSlotTypes);
+                    foreach (var slot in container.outputSlots) VisitSlot(ir, slot, seenSlotTypes);
+                }
+            }
         }
 
-        private void BuildOne(CatalogIR ir, Type type, HashSet<string> seen)
+        private void VisitSlot(CatalogIR ir, VFXSlot slot, HashSet<string> seen)
         {
-            if (type == null || !seen.Add(type.FullName)) return;
+            if (slot == null) return;
+            var slotType = slot.property.type;
+            var typeFqn = slotType.FullName;
+            if (!seen.Add(typeFqn)) return;
 
-            var desc = new SlotTypeDescriptor { TypeFQN = type.FullName };
+            var desc = new SlotTypeDescriptor { TypeFQN = typeFqn };
 
-            if (LeafTypes.Contains(type) || type.IsEnum || type.IsPrimitive)
+            // Leaves — explicit list plus primitives/enums.
+            if (LeafTypes.Contains(slotType) || slotType.IsEnum || slotType.IsPrimitive)
             {
                 desc.IsCompound = false;
                 ir.SlotTypes.Add(desc);
                 return;
             }
 
-            // Struct or reference type with public instance fields → compound
-            var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public);
-            if (fields.Length == 0)
+            // Compound — VFX Graph already did the decomposition via CreateSub.
+            // Walk the live slot's direct children; each one is a proper VFXSlot with
+            // its own property name + type. Recurse for nested compounds.
+            var children = slot.children?.ToList() ?? new List<VFXSlot>();
+            if (children.Count == 0)
             {
                 desc.IsCompound = false;
                 ir.SlotTypes.Add(desc);
@@ -1362,14 +1807,14 @@ namespace SpiralingStudio.VfxMcp.Generation
             }
 
             desc.IsCompound = true;
-            foreach (var f in fields)
+            foreach (var child in children)
             {
                 desc.Children.Add(new SlotChildDescriptor
                 {
-                    Name = f.Name,
-                    ChildTypeFQN = f.FieldType.FullName,
+                    Name = child.name,                         // authoritative VFX child name
+                    ChildTypeFQN = child.property.type.FullName,
                 });
-                BuildOne(ir, f.FieldType, seen);
+                VisitSlot(ir, child, seen);                    // recurse for nested compounds
             }
             ir.SlotTypes.Add(desc);
         }
@@ -1379,18 +1824,24 @@ namespace SpiralingStudio.VfxMcp.Generation
 
 - [ ] **Step 3: Wire into generator**
 
-In `VfxCatalogGenerator.Regenerate()`, after the walker call:
+Per erratum P-B3, the slot-tree builder consumes live `VFXModel` templates, not `Type` objects resolved from strings. The walker (task 3A-1) already creates a template via `ScriptableObject.CreateInstance(modelType)` to extract settings/slots; reuse the same template list instead of destroying and rebuilding. Change the walker to KEEP each template in a parallel list while the walk runs, then hand the templates to `VfxSlotTreeBuilder.BuildFromTemplates` before destroying them.
 
 ```csharp
-var slotTypes = ir.Operators.Concat(ir.Blocks).Concat(ir.Contexts).Concat(ir.Parameters)
-    .SelectMany(n => n.InputSlots.Concat(n.OutputSlots))
-    .Select(s => System.Type.GetType(s.SlotTypeFQN + ", " + "UnityEngine.dll"))
-    .Where(t => t != null)
-    .Distinct();
-new VfxSlotTreeBuilder().Build(ir, slotTypes);
+// In VfxCatalogGenerator.Regenerate():
+var walker = new VfxLibraryWalker();
+var (ir, templates) = walker.WalkWithTemplates(); // updated signature
+try
+{
+    new VfxSlotTreeBuilder().BuildFromTemplates(ir, templates);
+}
+finally
+{
+    foreach (var t in templates)
+        UnityEngine.ScriptableObject.DestroyImmediate(t);
+}
 ```
 
-*(Type.GetType may not resolve all FQNs from a string — the implementer should use `AppDomain.CurrentDomain.GetAssemblies()` to search across loaded assemblies if needed.)*
+`VfxLibraryWalker.WalkWithTemplates()` returns `(CatalogIR ir, List<VFXModel> templates)`. Templates are destroyed after slot-tree building; the IR holds only strings/metadata and survives.
 
 - [ ] **Step 4: Run tests + commit**
 
@@ -1530,6 +1981,27 @@ namespace SpiralingStudio.VfxMcp.Generation
 ");
         }
 
+        // ERRATUM P-M2: dispatch coercer per child type, not hardcoded CoerceToFloat.
+        // Known leaf mappings + recursion for nested compounds (seeded by VfxSlotTreeBuilder).
+        private static string DispatchCoercer(string childTypeFqn)
+        {
+            return childTypeFqn switch
+            {
+                "System.Single"       => "CoerceToFloat",
+                "System.Int32"        => "CoerceToInt",
+                "System.UInt32"       => "CoerceToInt",
+                "System.Boolean"      => "CoerceToBool",
+                "System.String"       => "CoerceToString",
+                "UnityEngine.Vector2" => "CoerceToVector2",
+                "UnityEngine.Vector3" => "CoerceToVector3",
+                "UnityEngine.Vector4" => "CoerceToVector4",
+                "UnityEngine.Color"   => "CoerceToColor",
+                "UnityEngine.Texture2D" => "CoerceToTexture2D",
+                // Nested compound types resolve to their generated CoerceTo<ShortName>
+                _ => "CoerceTo" + childTypeFqn.Substring(childTypeFqn.LastIndexOf('.') + 1).Replace("+", "_"),
+            };
+        }
+
         private static void EmitCompoundCoercer(StringBuilder sb, SlotTypeDescriptor slot)
         {
             string typeName = slot.TypeFQN.Replace("+", ".");
@@ -1545,14 +2017,18 @@ namespace SpiralingStudio.VfxMcp.Generation
             for (int i = 0; i < slot.Children.Count; i++)
             {
                 var child = slot.Children[i];
-                sb.AppendLine($"                if (arr.Count > {i}) result.{child.Name} = CoerceToFloat(arr[{i}]);");
+                string coercer = DispatchCoercer(child.ChildTypeFQN);
+                sb.AppendLine($"                if (arr.Count > {i}) result.{child.Name} = {coercer}(arr[{i}]);");
             }
             sb.AppendLine("            }");
             sb.AppendLine("            else if (t.Type == JTokenType.Object)");
             sb.AppendLine("            {");
             sb.AppendLine("                var obj = (JObject)t;");
             foreach (var child in slot.Children)
-                sb.AppendLine($"                if (obj[\"{child.Name}\"] != null) result.{child.Name} = CoerceToFloat(obj[\"{child.Name}\"]);");
+            {
+                string coercer = DispatchCoercer(child.ChildTypeFQN);
+                sb.AppendLine($"                if (obj[\"{child.Name}\"] != null) result.{child.Name} = {coercer}(obj[\"{child.Name}\"]);");
+            }
             sb.AppendLine("            }");
             sb.AppendLine("            else throw new System.InvalidCastException($\"Cannot coerce {t.Type} to " + typeName + "\");");
             sb.AppendLine("            return result;");
@@ -1563,7 +2039,7 @@ namespace SpiralingStudio.VfxMcp.Generation
 }
 ```
 
-*(Note: this simplified emitter assumes all compound children are `float`. For fields that are themselves compound, the implementer extends the emitter recursively — recursion is safe because `VfxSlotTreeBuilder` already seeded every nested type.)*
+Per erratum P-M2: nested compounds (e.g., `Transform` whose children are three `Vector3`s) are handled because `VfxSlotTreeBuilder` seeds every nested type before the emitter runs. The emitter must topologically sort slot types so dependencies are emitted first — append a topological sort pass before the emit loop. If `slot.Children[i].ChildTypeFQN` names a compound that hasn't been emitted yet, the generated C# won't compile. Use Kahn's algorithm keyed on `(SlotTypeDescriptor.TypeFQN → child.ChildTypeFQN)`.
 
 - [ ] **Step 3: Wire into generator and run**
 
@@ -1812,21 +2288,32 @@ namespace SpiralingStudio.VfxMcp.Catalog.Tests
 {
     public class VfxCatalogCompletenessTests
     {
+        // ERRATUM P-L2: derive expected counts from the walker's own subgraph lists,
+        // not a hardcoded -1. If VFXLibrary ever returns zero or multiple subgraph ops
+        // the old hardcoded test would wrongly pass or fail.
         [Test]
         public void GeneratedCatalog_Operators_MatchesVFXLibraryCount()
         {
-            Assert.AreEqual(
-                VFXLibrary.GetOperators().Count() - 1, // minus VFXSubgraphOperator which is split out
-                Generated.VfxCatalog.Operators.Length,
+            var ir = new VfxLibraryWalker().Walk();
+            int expected = VFXLibrary.GetOperators().Count() - ir.SubgraphOperators.Count;
+            Assert.AreEqual(expected, Generated.VfxCatalog.Operators.Length,
                 "Generated catalog operator count must match VFXLibrary minus subgraph ops.");
         }
 
         [Test]
         public void GeneratedCatalog_Blocks_MatchesVFXLibraryCount()
         {
-            Assert.AreEqual(
-                VFXLibrary.GetBlocks().Count() - 1,
-                Generated.VfxCatalog.Blocks.Length);
+            var ir = new VfxLibraryWalker().Walk();
+            int expected = VFXLibrary.GetBlocks().Count() - ir.SubgraphBlocks.Count;
+            Assert.AreEqual(expected, Generated.VfxCatalog.Blocks.Length);
+        }
+
+        [Test]
+        public void GeneratedCatalog_Contexts_MatchesVFXLibraryCount()
+        {
+            var ir = new VfxLibraryWalker().Walk();
+            int expected = VFXLibrary.GetContexts().Count() - ir.SubgraphContexts.Count;
+            Assert.AreEqual(expected, Generated.VfxCatalog.Contexts.Length);
         }
     }
 }
@@ -2000,6 +2487,8 @@ namespace SpiralingStudio.VfxMcp.Kernel.Tests
 
 ```csharp
 // Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Kernel/VfxIdentitySidecar.cs
+// ERRATUM P-H3: schema v2 — each token record carries Fingerprint, TypeFqn,
+// and ParentFingerprint so recovery can filter candidates (spec "Recover").
 using System.Collections.Generic;
 using System.IO;
 using Newtonsoft.Json;
@@ -2008,8 +2497,23 @@ namespace SpiralingStudio.VfxMcp.Kernel
 {
     internal sealed class VfxIdentitySidecar
     {
+        private const int CurrentSchemaVersion = 2;
+
+        internal sealed class Record
+        {
+            public string Fp;       // 16-hex fingerprint
+            public string Type;     // type FQN (null for v1 legacy)
+            public string ParentFp; // 16-hex parent fingerprint (null for v1 legacy)
+        }
+
+        internal sealed class FileShape
+        {
+            public int version;
+            public Dictionary<string, Dictionary<string, Record>> assets;
+        }
+
         private readonly string _path;
-        private Dictionary<string, Dictionary<string, string>> _data;
+        private Dictionary<string, Dictionary<string, Record>> _data;
         private bool _dirty;
 
         public VfxIdentitySidecar(string path = "Library/VfxMcpIdentity.json")
@@ -2022,44 +2526,80 @@ namespace SpiralingStudio.VfxMcp.Kernel
         {
             if (!File.Exists(_path))
             {
-                _data = new Dictionary<string, Dictionary<string, string>>();
+                _data = new Dictionary<string, Dictionary<string, Record>>();
                 return;
             }
             try
             {
                 var json = File.ReadAllText(_path);
-                _data = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, string>>>(json)
-                        ?? new Dictionary<string, Dictionary<string, string>>();
+                // Try v2 first
+                var shape = JsonConvert.DeserializeObject<FileShape>(json);
+                if (shape != null && shape.version == CurrentSchemaVersion && shape.assets != null)
+                {
+                    _data = shape.assets;
+                    return;
+                }
+                // v1 fallback: Dictionary<string, Dictionary<string, string>>
+                var v1 = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, string>>>(json);
+                _data = new Dictionary<string, Dictionary<string, Record>>();
+                if (v1 != null)
+                {
+                    foreach (var kv in v1)
+                    {
+                        var inner = new Dictionary<string, Record>();
+                        foreach (var e in kv.Value)
+                            inner[e.Key] = new Record { Fp = e.Value };
+                        _data[kv.Key] = inner;
+                    }
+                }
             }
             catch
             {
-                _data = new Dictionary<string, Dictionary<string, string>>();
+                _data = new Dictionary<string, Dictionary<string, Record>>();
             }
         }
 
-        public void Put(string graphGuid, string token, ulong fingerprint)
+        public void Put(string graphGuid, string token, ulong fingerprint,
+                        string typeFqn = null, ulong parentFingerprint = 0)
         {
             if (!_data.TryGetValue(graphGuid, out var inner))
             {
-                inner = new Dictionary<string, string>();
+                inner = new Dictionary<string, Record>();
                 _data[graphGuid] = inner;
             }
-            inner[token] = fingerprint.ToString("x16");
+            inner[token] = new Record
+            {
+                Fp = fingerprint.ToString("x16"),
+                Type = typeFqn,
+                ParentFp = parentFingerprint != 0 ? parentFingerprint.ToString("x16") : null,
+            };
             _dirty = true;
         }
 
         public ulong Get(string graphGuid, string token)
         {
             if (!_data.TryGetValue(graphGuid, out var inner)) return 0;
-            if (!inner.TryGetValue(token, out var hex)) return 0;
-            return ulong.Parse(hex, System.Globalization.NumberStyles.HexNumber);
+            if (!inner.TryGetValue(token, out var rec) || rec.Fp == null) return 0;
+            return ulong.Parse(rec.Fp, System.Globalization.NumberStyles.HexNumber);
+        }
+
+        public string GetTypeFqn(string graphGuid, string token)
+            => _data.TryGetValue(graphGuid, out var inner)
+               && inner.TryGetValue(token, out var rec) ? rec.Type : null;
+
+        public ulong GetParentFingerprint(string graphGuid, string token)
+        {
+            if (!_data.TryGetValue(graphGuid, out var inner)) return 0;
+            if (!inner.TryGetValue(token, out var rec) || rec.ParentFp == null) return 0;
+            return ulong.Parse(rec.ParentFp, System.Globalization.NumberStyles.HexNumber);
         }
 
         public void Flush()
         {
             if (!_dirty) return;
             Directory.CreateDirectory(Path.GetDirectoryName(_path));
-            File.WriteAllText(_path, JsonConvert.SerializeObject(_data, Formatting.Indented));
+            var shape = new FileShape { version = CurrentSchemaVersion, assets = _data };
+            File.WriteAllText(_path, JsonConvert.SerializeObject(shape, Formatting.Indented));
             _dirty = false;
         }
     }
@@ -2168,18 +2708,37 @@ namespace SpiralingStudio.VfxMcp.Kernel
                     return candidate;
             }
 
-            // Recovery path — loose match by type + parent fingerprint
+            // ERRATUM P-H3: recovery must filter by type + parent fingerprint, not
+            // accept every candidate. The sidecar must carry the expected typeFqn and
+            // parentFingerprint per erratum P-H3 (schema v2).
+            string expectedTypeFqn = _sidecar.GetTypeFqn(graphGuid, token);
+            ulong expectedParentFp = _sidecar.GetParentFingerprint(graphGuid, token);
+
             var matches = new List<VFXModel>();
             foreach (var candidate in WalkAllModels(graph))
             {
-                // loose criteria defined in the spec; simplified here
+                if (expectedTypeFqn != null && candidate.GetType().FullName != expectedTypeFqn)
+                    continue;
+                if (expectedParentFp != 0)
+                {
+                    var parent = candidate.GetParent();
+                    ulong parentFp = parent != null
+                        ? VfxStructuralFingerprint.Compute(graphGuid, parent)
+                        : 0;
+                    if (parentFp != expectedParentFp) continue;
+                }
                 matches.Add(candidate);
             }
             if (matches.Count == 1)
             {
-                // update sidecar with the new fingerprint, warn via logging
+                // update sidecar with the new fingerprint (v2 schema preserves type/parentFp)
                 ulong newFp = VfxStructuralFingerprint.Compute(graphGuid, matches[0]);
-                _sidecar.Put(graphGuid, token, newFp);
+                var newParent = matches[0].GetParent();
+                ulong newParentFp = newParent != null
+                    ? VfxStructuralFingerprint.Compute(graphGuid, newParent)
+                    : 0;
+                _sidecar.Put(graphGuid, token, newFp, matches[0].GetType().FullName, newParentFp);
+                // emit identity_drifted warning via caller
                 return matches[0];
             }
 
@@ -2432,7 +2991,10 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 return new VfxCompileResult { Ok = false, DurationMs = (int)sw.ElapsedMilliseconds };
             }
             var graph = resource.GetOrCreateGraph();
-            graph.CompileAndUpdateAsset();
+            // ERRATUM P-B1: CompileAndUpdateAsset takes a VisualEffectAsset argument.
+            // Source: Packages/com.unity.visualeffectgraph/Editor/Models/VFXGraph.cs:1464
+            //   internal UnityObject[] CompileAndUpdateAsset(VisualEffectAsset asset)
+            graph.CompileAndUpdateAsset(asset);
 
             var result = new VfxCompileResult();
             // Access errorManager.compileReporter — the property name may differ;
@@ -2477,66 +3039,120 @@ Not fully expanded — test crafts a `.vfx` asset with a CustomHLSL block contai
 
 This new file is authored fresh (not moved from `Tools/Vfx/`). Phase 7 deletes the old `Tools/Vfx/VfxConsoleReader.cs` as part of the legacy cleanup; by that time the new `Kernel/VfxConsoleReader.cs` has been in service since phase 3.
 
-- [ ] **Step 1: Implement the new console reader**
+- [ ] **Step 1: Implement the new console reader (ring buffer, NO reflection)**
+
+**ERRATUM P-H1 / A-B2:** `UnityEditor.LogEntries` reflection is broken on Unity 6 (6000.x). The existing `Editor/Tools/Vfx/VfxConsoleReader.cs` avoids it with an `Application.logMessageReceived` ring buffer. Copy that pattern into the kernel file and add high-water-mark APIs. **Zero reflection.**
 
 ```csharp
 // Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Kernel/VfxConsoleReader.cs
+// Ring-buffer console reader derived from the existing workaround at
+//   Editor/Tools/Vfx/VfxConsoleReader.cs
+// Uses Application.logMessageReceived — no reflection, no UnityEditor.LogEntries.
+// High-water-mark API returns only entries added since the caller's snapshot.
+using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEditor;
+using UnityEngine;
 
 namespace SpiralingStudio.VfxMcp.Kernel
 {
-    /// <summary>
-    /// Console reader with per-session high-water-mark semantics.
-    /// The watermark is the LogEntries count at snapshot time; subsequent reads
-    /// return only entries added since the snapshot.
-    /// </summary>
+    [InitializeOnLoad]
     internal static class VfxConsoleReader
     {
+        private const int BufferCapacity = 500;
+
+        private struct Entry
+        {
+            public long sequence;    // monotonically increasing per captured log
+            public string message;
+            public string stackTrace;
+            public LogType type;
+            public DateTime timestamp;
+        }
+
+        /// <summary>Opaque snapshot token returned by <see cref="GetHighWaterMark"/>.</summary>
+        internal readonly struct Mark
+        {
+            public readonly long Sequence;
+            public Mark(long sequence) { Sequence = sequence; }
+        }
+
+        private static readonly Entry[] _buffer = new Entry[BufferCapacity];
+        private static int _writeIndex;
+        private static int _count;
+        private static long _nextSequence = 1;
+        private static readonly object _lock = new object();
+
+        static VfxConsoleReader()
+        {
+            Application.logMessageReceived -= OnLogMessage;
+            Application.logMessageReceived += OnLogMessage;
+        }
+
+        private static void OnLogMessage(string message, string stackTrace, LogType type)
+        {
+            lock (_lock)
+            {
+                _buffer[_writeIndex] = new Entry
+                {
+                    sequence = _nextSequence++,
+                    message = message ?? "",
+                    stackTrace = stackTrace,
+                    type = type,
+                    timestamp = DateTime.UtcNow,
+                };
+                _writeIndex = (_writeIndex + 1) % BufferCapacity;
+                if (_count < BufferCapacity) _count++;
+            }
+        }
+
         public static object GetHighWaterMark()
         {
-            return GetEntriesCount();
+            lock (_lock) return new Mark(_nextSequence);
         }
 
         public static IReadOnlyList<string> GetLinesSince(object snapshot)
         {
-            int start = snapshot is int i ? i : 0;
-            int end = GetEntriesCount();
-            var lines = new List<string>();
-            for (int idx = start; idx < end; idx++)
-                lines.Add(GetEntryText(idx));
-            return lines;
+            long since = snapshot is Mark m ? m.Sequence : 0;
+            var results = new List<string>();
+            lock (_lock)
+            {
+                int start = _count < BufferCapacity ? 0 : _writeIndex;
+                for (int i = 0; i < _count; i++)
+                {
+                    int idx = (start + i) % BufferCapacity;
+                    ref var entry = ref _buffer[idx];
+                    if (entry.sequence >= since)
+                        results.Add(entry.message);
+                }
+            }
+            return results;
         }
 
-        // LogEntries is internal; access via reflection on the UnityEditor.LogEntries type.
-        // This is the only reflection-into-UnityEditor allowed in the kernel because
-        // LogEntries doesn't expose a public API and isn't gated by our InternalsVisibleTo.
-        private static System.Type s_LogEntriesType;
-        private static System.Reflection.MethodInfo s_GetCountMethod;
-        private static System.Reflection.MethodInfo s_GetEntryInternalMethod;
-
-        private static System.Type LogEntriesType => s_LogEntriesType ??=
-            System.Type.GetType("UnityEditor.LogEntries, UnityEditor");
-
-        private static int GetEntriesCount()
+        /// <summary>Returns recent entries with full metadata (for vfx_diag.read_console verbose).</summary>
+        internal static List<(string message, LogType type, DateTime timestamp, long sequence)>
+            GetDetailedSince(object snapshot)
         {
-            s_GetCountMethod ??= LogEntriesType?.GetMethod("GetCount",
-                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public);
-            return (int)(s_GetCountMethod?.Invoke(null, null) ?? 0);
-        }
-
-        private static string GetEntryText(int index)
-        {
-            // LogEntries.GetEntryInternal signature varies by Unity version; the
-            // implementer picks the right overload during phase 3C execution.
-            return $"[console line {index}]"; // placeholder — real impl wired in phase 3C
+            long since = snapshot is Mark m ? m.Sequence : 0;
+            var results = new List<(string, LogType, DateTime, long)>();
+            lock (_lock)
+            {
+                int start = _count < BufferCapacity ? 0 : _writeIndex;
+                for (int i = 0; i < _count; i++)
+                {
+                    int idx = (start + i) % BufferCapacity;
+                    ref var entry = ref _buffer[idx];
+                    if (entry.sequence >= since)
+                        results.Add((entry.message, entry.type, entry.timestamp, entry.sequence));
+                }
+            }
+            return results;
         }
     }
 }
 ```
 
-Note: `VfxConsoleReader` is the ONE exception to the "no runtime reflection" rule in the kernel — it reflects on `UnityEditor.LogEntries` which is not part of the VFX Graph package and not covered by our `InternalsVisibleTo` patch. The `VfxNoReflectionTests` (task 5-6) explicitly excludes this file.
+**Reflection rule:** this file contains ZERO reflection (no `Type.GetType`, no `MethodInfo.Invoke`). The "LogEntries exception" wording from older drafts of the spec/plan is obsolete — update task 5-6 `VfxNoReflectionTests` to assert `VfxConsoleReader.cs` is reflection-free alongside every other kernel file (not to exclude it).
 
 - [ ] **Step 2: Write the test**
 
@@ -2976,24 +3592,74 @@ The signature and name MUST match across all 9 tool classes. Lane C finalizes th
 
 ```csharp
 // Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Kernel/VfxKernelContainer.cs
+// ERRATUM P-H5: expose an Override hook so identity tests can swap in a temporary
+// sidecar path. Without this, tests sharing Library/VfxMcpIdentity.json leak state
+// across runs.
+using System;
+
 namespace SpiralingStudio.VfxMcp.Kernel
 {
+    internal sealed class VfxKernelServices
+    {
+        public IVfxIdentity Identity;
+        public IVfxYamlVerifier Verifier;
+        public IVfxCompileGate CompileGate;
+        public IVfxConsoleCorrelator Correlator;
+        public IVfxBusyGate BusyGate;
+        public IVfxNodeOps NodeOps;
+        public IVfxResponseShaper Shaper;
+        public IVfxTransaction Transaction;
+
+        public static VfxKernelServices CreateDefault()
+        {
+            var identity = new VfxIdentity(new VfxIdentitySidecar());
+            var verifier = new VfxYamlVerifier();
+            var compile  = new VfxCompileGate();
+            var console  = new VfxConsoleCorrelator();
+            var busy     = new VfxBusyGate();
+            var nodeOps  = new VfxNodeOps();
+            var shaper   = new VfxResponseShaper();
+            var txn      = new VfxTransaction(identity, verifier, compile, console, busy);
+            return new VfxKernelServices
+            {
+                Identity = identity, Verifier = verifier, CompileGate = compile,
+                Correlator = console, BusyGate = busy, NodeOps = nodeOps,
+                Shaper = shaper, Transaction = txn,
+            };
+        }
+    }
+
     /// <summary>
     /// Static singleton container providing kernel services to tool classes.
-    /// Each tool class calls VfxKernelContainer.Instance.<service> at the start
-    /// of its HandleCommand.
+    /// Tests may call Override() to swap the container with a test-local services
+    /// instance; the returned IDisposable restores the previous services on Dispose.
     /// </summary>
     internal static class VfxKernelContainer
     {
-        public static IVfxIdentity Identity { get; } = new VfxIdentity(new VfxIdentitySidecar());
-        public static IVfxYamlVerifier Verifier { get; } = new VfxYamlVerifier();
-        public static IVfxCompileGate CompileGate { get; } = new VfxCompileGate();
-        public static IVfxConsoleCorrelator Correlator { get; } = new VfxConsoleCorrelator();
-        public static IVfxBusyGate BusyGate { get; } = new VfxBusyGate();
-        public static IVfxNodeOps NodeOps { get; } = new VfxNodeOps();
-        public static IVfxResponseShaper Shaper { get; } = new VfxResponseShaper();
-        public static IVfxTransaction Transaction { get; } =
-            new VfxTransaction(Identity, Verifier, CompileGate, Correlator, BusyGate);
+        private static VfxKernelServices s_Services = VfxKernelServices.CreateDefault();
+
+        public static IVfxIdentity Identity => s_Services.Identity;
+        public static IVfxYamlVerifier Verifier => s_Services.Verifier;
+        public static IVfxCompileGate CompileGate => s_Services.CompileGate;
+        public static IVfxConsoleCorrelator Correlator => s_Services.Correlator;
+        public static IVfxBusyGate BusyGate => s_Services.BusyGate;
+        public static IVfxNodeOps NodeOps => s_Services.NodeOps;
+        public static IVfxResponseShaper Shaper => s_Services.Shaper;
+        public static IVfxTransaction Transaction => s_Services.Transaction;
+
+        internal static IDisposable Override(VfxKernelServices replacement)
+        {
+            var prev = s_Services;
+            s_Services = replacement;
+            return new Disposer(() => s_Services = prev);
+        }
+
+        private sealed class Disposer : IDisposable
+        {
+            private Action _onDispose;
+            public Disposer(Action onDispose) { _onDispose = onDispose; }
+            public void Dispose() { _onDispose?.Invoke(); _onDispose = null; }
+        }
     }
 }
 ```
@@ -3072,16 +3738,20 @@ namespace SpiralingStudio.VfxMcp.Tools
 
             // Determine kind from extension
             string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
-            var asset = ext switch
+            // ERRATUM P-M5 + NEW-1: VisualEffectAsset is NOT a ScriptableObject; use the
+            // VFX Graph package's own helper. And there is no `.vfxop` — only `.vfxblock`.
+            // Source: Packages/com.unity.visualeffectgraph/Editor/VFXAssetEditorUtility.cs:54,55,84
+            UnityEngine.Object asset = ext switch
             {
-                ".vfx" => ScriptableObject.CreateInstance(typeof(UnityEngine.VFX.VisualEffectAsset)),
-                ".vfxop" => ScriptableObject.CreateInstance<UnityEditor.VFX.VisualEffectSubgraphBlock>(),
-                ".vfxoperator" => ScriptableObject.CreateInstance<UnityEditor.VFX.VisualEffectSubgraphOperator>(),
+                ".vfx"         => UnityEditor.VFX.VisualEffectAssetEditorUtility.CreateNewAsset(path),
+                ".vfxblock"    => UnityEditor.VFX.VisualEffectAssetEditorUtility.CreateNew<UnityEditor.VFX.VisualEffectSubgraphBlock>(path),
+                ".vfxoperator" => UnityEditor.VFX.VisualEffectAssetEditorUtility.CreateNew<UnityEditor.VFX.VisualEffectSubgraphOperator>(path),
                 _ => throw new VfxValidationException("validation_error",
-                    $"Unsupported extension: {ext}. Use .vfx, .vfxop, or .vfxoperator.", null)
+                    $"Unsupported extension: {ext}. Use .vfx, .vfxblock, or .vfxoperator.", null)
             };
 
-            AssetDatabase.CreateAsset(asset, path);
+            // CreateNewAsset / CreateNew<T> already call AssetDatabase.ImportAsset(path).
+            // No AssetDatabase.CreateAsset call needed.
             AssetDatabase.SaveAssets();
 
             return new JObject
@@ -3221,9 +3891,15 @@ namespace SpiralingStudio.VfxMcp.Tools
             };
         }
 
+        // ERRATUM P-M4: persist the high-water mark across calls so subsequent reads
+        // return only NEW lines. On first call returns everything in the ring buffer;
+        // on assembly reload the static field resets naturally.
+        private static object s_lastReadMark = VfxConsoleReader.GetHighWaterMark();
+
         private static object ReadConsole(JObject @params)
         {
-            var lines = VfxConsoleReader.GetLinesSince(VfxConsoleReader.GetHighWaterMark());
+            var lines = VfxConsoleReader.GetLinesSince(s_lastReadMark);
+            s_lastReadMark = VfxConsoleReader.GetHighWaterMark();
             return new JObject { ["lines"] = new JArray(lines) };
         }
     }
@@ -3305,16 +3981,19 @@ public string AddSubgraphRef(string parentGraphPath, string subgraphAssetPath, V
     switch (ext)
     {
         case ".vfxoperator":
+            // ERRATUM P-B5: namespace is UnityEditor.VFX, not .Operator.
             refModel = SpiralingStudio.VfxMcp.Generated.VfxNodeWrappers.CreateOperator(
-                "UnityEditor.VFX.Operator.VFXSubgraphOperator");
+                "UnityEditor.VFX.VFXSubgraphOperator");
             break;
-        case ".vfxop":
+        case ".vfxblock":
+            // ERRATUM NEW-1 + P-L1: the context-subgraph asset extension is .vfxblock,
+            // not .vfxop. Source: VFXAssetEditorUtility.cs:54.
             refModel = SpiralingStudio.VfxMcp.Generated.VfxNodeWrappers.CreateContext(
                 "UnityEditor.VFX.VFXSubgraphContext");
             break;
         default:
             throw new VfxValidationException("validation_error",
-                $"Subgraph asset must be .vfxop or .vfxoperator: got {ext}", null);
+                $"Subgraph asset must be .vfxblock or .vfxoperator: got {ext}", null);
     }
 
     SpiralingStudio.VfxMcp.Generated.VfxSubgraphWrappers.BindAsset(refModel, subgraphAssetPath);
@@ -3373,6 +4052,80 @@ namespace SpiralingStudio.VfxMcp.Tools
 }
 ```
 
+### Task 4-SMOKE: Build the E2E smoke test (moved here from Phase 6 per erratum A-B1)
+
+**Files:**
+- Create: `Packages/com.spiralingstudio.mcp.vfxgraph/Tests/Editor/Tools/VfxSmokeTests.cs`
+
+**Why here:** Phase 6 task 6-1 runs all 18 test categories (category 15 is the smoke test) to judge release readiness. If the smoke test is written AT phase 6, category 15 has nothing to run. Writing it at the end of phase 4 gives phase 4a code-reviewer a real integration signal and phase 5 a stable baseline for populating quirks/hints.
+
+**Owner:** main agent (after all three Phase 4 lanes land).
+
+- [ ] **Step 1: Write the E2E test**
+
+The test must exercise every one of the 9 tools at least once in a single flow. Build a minimal thruster VFX:
+
+```csharp
+// Packages/com.spiralingstudio.mcp.vfxgraph/Tests/Editor/Tools/VfxSmokeTests.cs
+using NUnit.Framework;
+using Newtonsoft.Json.Linq;
+using SpiralingStudio.VfxMcp.Tools;
+
+namespace SpiralingStudio.VfxMcp.Tools.Tests
+{
+    public class VfxSmokeTests
+    {
+        [Test]
+        public void EndToEnd_Thruster_BuildCompileSave_NoWarnings()
+        {
+            const string path = "Assets/Tests/VfxFixtures/SmokeThruster.vfx";
+
+            // 1. vfx_asset.create
+            VfxAssetTool.HandleCommand(JObject.FromObject(new { action = "create", path }));
+
+            // 2. vfx_node.add → Spawn context
+            var spawn = (JObject)VfxNodeTool.HandleCommand(JObject.FromObject(new {
+                action = "add", graph = path, type = "VFXBasicSpawner" }));
+            string spawnTok = spawn["added"][0]["token"].Value<string>();
+
+            // 3. vfx_node.add → Initialize context
+            var init = (JObject)VfxNodeTool.HandleCommand(JObject.FromObject(new {
+                action = "add", graph = path, type = "VFXBasicInitialize" }));
+
+            // 4. vfx_node.add → Update context
+            // 5. vfx_node.add → Output context (e.g., VFXPlanarPrimitiveOutput)
+            // 6. vfx_block.add → SetAttribute size/color/lifetime under Initialize
+            // 7. vfx_node.add → Constant operators for the attribute values
+            // 8. vfx_node.connect → wire operators into the block slot values
+            // 9. vfx_property.add → expose `intensity` as float
+            // 10. vfx_property.set_value → default intensity
+            // 11. vfx_graph.save
+            // 12. vfx_graph.compile
+            // 13. vfx_graph.compilation_status → must report ok
+            // 14. vfx_subgraph.create → new .vfxblock subgraph asset
+            // 15. vfx_subgraph.add_ref → place ref in parent graph
+            // 16. vfx_batch → 3 ops in one commit, verify health is clean
+            // 17. vfx_diag.list_node_types → paginated, non-empty
+            // 18. vfx_recipe.list → returns empty with note about v0.3.1
+
+            // assertions: no warnings in final commit, compile status ok,
+            // every tool was called at least once.
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Run the test** via `mcp__UnityMCP__run_tests` filter `VfxSmokeTests`. Expected: green.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add Packages/com.spiralingstudio.mcp.vfxgraph/Tests/Editor/Tools/VfxSmokeTests.cs
+git commit -m "Add E2E smoke test covering all 9 tools (task 4-SMOKE)"
+```
+
+---
+
 ### Task 4C-3: VfxBatchTool
 
 **Files:**
@@ -3415,16 +4168,17 @@ Scope: commits since tag v0.2-pre-rebuild on branch vfxgraph-rebuild-v0.3.
 
 Specific things to validate:
 1. Every gap in the gaps doc is structurally addressed (not just acknowledged)
-2. Every finding in both external reviews is addressed or pushed back with reasoning
-3. Generated catalog count matches VFXLibrary.Get*() counts exactly
-4. Kernel code does NO runtime reflection on UnityEditor.VFX.*
+2. Every finding in BOTH external spec reviews AND both plan reviews is addressed or pushed back with reasoning. ERRATA section of this plan must be fully applied.
+3. Generated catalog count matches VFXLibrary.Get*() counts exactly (using the walker's own subgraph list counts per erratum P-L2)
+4. Kernel code does NO runtime reflection on `UnityEditor.VFX.*` / `UnityEngine.VFX.*`. Reflection on non-VFX types and on our own generated tool classes is allowed and tested.
 5. No tool class echoes input or uses verbose response envelopes
-6. No identity writes to m.label, m.name, or asset-resident fields
-7. The InternalsVisibleTo patch exists at
-   Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs
+6. No identity writes to m.label, m.name, or asset-resident fields (identity is sidecar-only per spec)
+7. The InternalsVisibleTo patch exists at `Packages/com.unity.visualeffectgraph/Editor/AssemblyInfo.cs`
 8. The three-part health gate (YAML + compile + console) runs on every commit
 9. The 9 tools all follow the same HandleCommand → action switch pattern
-10. No placeholder-shaped code (NotImplementedException in wired paths)
+10. **Shipped actions only** — the deferred `vfx_subgraph.inline` and `vfx_subgraph.extract` actions must either throw `NotImplementedException("v0.3.1")` or be absent from the tool schema. The release claim is narrowed per erratum A-H2.
+11. **ErratumA verification:** task 4-SMOKE `VfxSmokeTests.cs` exists and exercises all 9 tools before this review runs.
+12. `VfxConsoleReader.cs` in `Editor/Kernel/` is the ring-buffer implementation (not LogEntries reflection) per erratum P-H1. The old file at `Editor/Tools/Vfx/VfxConsoleReader.cs` is deleted in phase 7 via `git rm`.
 
 Report findings in a new doc at docs/superpowers/specs/2026-04-07-rebuild-phase4-review.md.
 Findings marked BLOCKING must be resolved before phase 5 begins.
@@ -3448,7 +4202,7 @@ Use effort: max.
 
 - [ ] **Step 1: Identify quirks from phase 4 smoke tests**
 
-The phase 4 smoke tests (task 4A-X) will surface name collisions (`Lerp`, etc.), hidden settings, and aliasing needs. Collect them into Quirks.yaml:
+The phase 4 smoke test (**task 4-SMOKE**, added per erratum A-B1) will surface name collisions (`Lerp`, etc.), hidden settings, and aliasing needs. Collect them into Quirks.yaml:
 
 ```yaml
 # Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Generation/Quirks.yaml
@@ -3532,9 +4286,9 @@ namespace SpiralingStudio.VfxMcp.Kernel.Tests
             foreach (var file in Directory.GetFiles(kernelDir, "*.cs", SearchOption.AllDirectories))
             {
                 var content = File.ReadAllText(file);
-                // Exclude VfxStructuralFingerprint.cs from the check because it uses
-                // type.FullName string comparison (not runtime reflection)
-                if (file.EndsWith("VfxStructuralFingerprint.cs")) continue;
+                // ERRATUM A-H3: no exclusions. Every kernel file must be reflection-free
+                // against UnityEditor.VFX.* types. VfxConsoleReader uses Application.
+                // logMessageReceived (not LogEntries), so it's also clean.
                 Assert.IsFalse(forbidden.IsMatch(content),
                     $"{file}: contains forbidden runtime reflection on VFX types. " +
                     "The spec requires all VFX type access go through the generated catalog.");
@@ -3580,16 +4334,17 @@ Manually walk through each criterion from spec "Production-ready release gate" s
 
 - [ ] **Step 3: Fix anything failing**
 
-### Task 6-2: End-to-end smoke test
+### Task 6-2: Re-verify the E2E smoke test after phase 5 quirks/hints land
 
-**Files:**
-- Create: `Packages/com.spiralingstudio.mcp.vfxgraph/Tests/Editor/Tools/VfxSmokeTests.cs`
+**Files:** (no new files — `VfxSmokeTests.cs` already exists from task 4-SMOKE)
 
-Build a complete particle system end-to-end using the 9 tools in sequence. The test exercises every tool at least once.
+Per erratum A-B1, the smoke test file is already created at the end of phase 4. Phase 6 task 6-2 now re-runs it and confirms that phase 5's `Quirks.yaml`/`Hints.yaml` population, the no-reflection analyzer, and the busy-gate tests haven't regressed the smoke.
 
-- [ ] **Step 1: Write the E2E test**
+- [ ] **Step 1: Re-run the E2E test after phase 5 completes**
 
-The implementer constructs a minimal thruster VFX:
+Run `mcp__UnityMCP__run_tests` filter `VfxSmokeTests`. Expected: still green with zero warnings in the health report.
+
+**(Historical note — previous task 6-2 content, kept for reference):** The smoke test exercises every tool in sequence:
 1. `vfx_asset.create` → new .vfx
 2. `vfx_node.add` → Spawn context
 3. `vfx_node.add` → Initialize context
@@ -3613,27 +4368,22 @@ The implementer constructs a minimal thruster VFX:
 ### Task 7-1: Delete old files
 
 **Files:**
-- Delete: 30 files under `Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx/` except `VfxConsoleReader.cs` (move to `Kernel/`)
+- Delete: 30+ files under `Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx/` (including `VfxConsoleReader.cs` — the replacement already exists in `Kernel/` from phase 3C-2b; erratum P-H1/P-H4/A-B2)
 - Delete: 5 old test files under `Packages/com.spiralingstudio.mcp.vfxgraph/Tests/Editor/`
 
-- [ ] **Step 1: Move VfxConsoleReader.cs to Kernel/**
+- [ ] **Step 1: Delete the old Vfx/ tools directory (including the old VfxConsoleReader)**
 
-Run:
-```bash
-git mv Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx/VfxConsoleReader.cs Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Kernel/VfxConsoleReader.cs
-```
-
-Update the namespace inside the file to `SpiralingStudio.VfxMcp.Kernel`.
-
-- [ ] **Step 2: Adapt for high-water mark semantics**
-
-Add `GetHighWaterMark()` and `GetLinesSince(object mark)` methods per the phase 3 contracts.
-
-- [ ] **Step 3: Delete the old Vfx/ directory**
+ERRATUM P-H4 / A-B2: do NOT `git mv`. The destination already exists (the new Kernel reader was authored fresh in phase 3C-2b). A `git mv` would fail or overwrite the new file. Use `git rm`:
 
 ```bash
 git rm -r Packages/com.spiralingstudio.mcp.vfxgraph/Editor/Tools/Vfx
 ```
+
+The ring-buffer pattern, namespace `SpiralingStudio.VfxMcp.Kernel`, and high-water-mark API all already exist in `Editor/Kernel/VfxConsoleReader.cs` from phase 3C-2b — nothing to move.
+
+- [ ] **Step 2: Verify the Kernel console reader is still referenced**
+
+The `VfxConsoleCorrelator` (task 3C-3) and `VfxDiagTool.ReadConsole` (task 4A-3) both reference the kernel reader. After the old directory is deleted, run `read_console` via `mcp__UnityMCP__read_console` and confirm no compile errors.
 
 - [ ] **Step 4: Delete the 5 old test files**
 
@@ -3674,11 +4424,15 @@ git commit -m "Phase 7: delete legacy addon files; move VfxConsoleReader to Kern
   manage_vfx + manage_vfx_graph + inspect_vfx_asset with 9 grouped tools:
   vfx_asset, vfx_graph, vfx_node, vfx_block, vfx_property, vfx_subgraph,
   vfx_recipe (scaffold), vfx_batch, vfx_diag
-- Generator-driven typed catalog (walks VFXLibrary.Get*() descriptors;
-  zero runtime reflection)
+- Generator-driven typed catalog walking VFXLibrary.Get*() descriptors.
+  **Zero runtime reflection on UnityEditor.VFX.* / UnityEngine.VFX.* types**
+  (reflection on non-VFX types and on our own generated tool classes for
+  batch dispatch is documented and tested).
 - Sidecar + structural-fingerprint identity (no asset mutation)
 - Three-part health gate: YAML diff + compile/error-manager + console correlation
-- First-class subgraph support (.vfxop, .vfxoperator)
+- First-class subgraph authoring: create, add_ref, get_exposed, set_override
+  for .vfxblock (context/block subgraph) and .vfxoperator (operator subgraph).
+  **Non-destructive refactoring (inline / extract) is deferred to v0.3.1.**
 - Token-savings response shaping (verbose: true|false, compact tokens)
 - Performance budgets for 500-node graphs
 
