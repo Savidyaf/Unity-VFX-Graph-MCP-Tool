@@ -163,10 +163,49 @@ namespace SpiralingStudio.VfxMcp.Kernel
         }
 
         // ─────────────────────────── AddSubgraphRef ────────────────────────
-        // Lane 4C owns this.
+        // Lane 4C — implemented.
 
         public string AddSubgraphRef(string parentGraphPath, string subgraphAssetPath, Vector2 pos)
-            => throw new NotImplementedException("Phase 4 — VfxSubgraphTool (Lane 4C)");
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(parentGraphPath);
+            if (asset == null)
+                throw new VfxValidationException("asset_not_found",
+                    $"Parent graph not found: {parentGraphPath}", null);
+
+            // SOFT-FORK BRIDGE — never call asset.GetResource().GetOrCreateGraph() directly.
+            var graph = VfxMcpKernelHelpers.LoadGraphFromAsset(asset);
+            if (graph == null)
+                throw new VfxValidationException("graph_load_failed",
+                    $"Could not load VFXGraph from {parentGraphPath}", null);
+
+            // Determine subgraph kind from file extension.
+            // ERRATUM P-B5 + NEW-1: namespaces are UnityEditor.VFX.* (no .Operator. nesting).
+            // Both VFXSubgraphOperator and VFXSubgraphBlock carry [VFXInfo] so the
+            // VFXLibrary.Get*() catalogue entries exist — no ScriptableObject fallback needed.
+            string ext = System.IO.Path.GetExtension(subgraphAssetPath).ToLowerInvariant();
+
+            VFXModel refModel;
+            switch (ext)
+            {
+                case ".vfxoperator":
+                    refModel = VfxNodeWrappers.CreateOperator("UnityEditor.VFX.VFXSubgraphOperator");
+                    break;
+                case ".vfxblock":
+                    refModel = VfxNodeWrappers.CreateBlock("UnityEditor.VFX.VFXSubgraphBlock");
+                    break;
+                default:
+                    throw new VfxValidationException("validation_error",
+                        $"Subgraph asset must be .vfxblock or .vfxoperator; got '{ext}'", null);
+            }
+
+            // BindAsset validates the asset class matches the model type and assigns m_Subgraph.
+            VfxSubgraphWrappers.BindAsset(refModel, subgraphAssetPath);
+            graph.AddChild(refModel);
+            refModel.position = pos;
+
+            string guid = AssetDatabase.AssetPathToGUID(parentGraphPath);
+            return VfxKernelContainer.Identity.Mint(guid, refModel);
+        }
 
         // ─────────────────────────── RemoveNode ────────────────────────────
 
