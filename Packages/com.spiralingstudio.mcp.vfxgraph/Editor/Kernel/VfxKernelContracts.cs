@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections.Generic;
+using Newtonsoft.Json.Linq;
 using UnityEditor.VFX;
 
 namespace SpiralingStudio.VfxMcp.Kernel
@@ -33,6 +34,22 @@ namespace SpiralingStudio.VfxMcp.Kernel
         // recovery path can filter candidates without ambiguity.
         public string TypeFqn;
         public ulong ParentFingerprint;
+    }
+
+    // ────────────────────────── Node enumeration entry (v0.3.1) ──────────────────────────
+    // Returned by IVfxNodeOps.ListNodes for the read-side enumeration surface.
+    // Tokens are minted/recovered via VfxIdentity.Mint, so calling ListNodes on
+    // a graph the user never edited via MCP will assign fresh tokens to all
+    // existing nodes (then persist via the sidecar Flush).
+
+    internal sealed class VfxNodeListEntry
+    {
+        public string  Token;
+        public string  TypeFqn;
+        public UnityEngine.Vector2 Position;
+        public string  ParentToken;     // null for top-level (graph children)
+        public string  Category;        // "context" | "operator" | "block" | "parameter" | "subgraph_ref"
+        public int     BlockIndex;      // -1 unless Category == "block"
     }
 
     // ────────────────────────── Verifier ──────────────────────────
@@ -212,6 +229,22 @@ namespace SpiralingStudio.VfxMcp.Kernel
         object GetProperty(string graphAssetPath, string token, string name);
 
         void DiscardChanges(string graphAssetPath);
+
+        // ── v0.3.1 contracts bump ─────────────────────────────────────────
+
+        /// <summary>
+        /// Enumerate every model in the graph (including blocks nested under
+        /// contexts). Tokens are minted/recovered via VfxIdentity.Mint, so
+        /// calling this on a graph the user never edited via MCP will assign
+        /// fresh tokens to all existing nodes.
+        /// </summary>
+        IReadOnlyList<VfxNodeListEntry> ListNodes(string graphAssetPath);
+
+        /// <summary>
+        /// Move an existing node by token. Replaces the previous SetSetting-
+        /// based "position" hack (Phase 4a F15).
+        /// </summary>
+        void MoveNode(string graphAssetPath, string token, UnityEngine.Vector2 position);
     }
 
     // ────────────────────────── Response shaper ──────────────────────────
@@ -221,6 +254,16 @@ namespace SpiralingStudio.VfxMcp.Kernel
         object Shape(VfxCommitResult commit, bool verbose);
         object ShapeError(VfxErrorEnvelope error);
         object ShapeRead(object payload, bool verbose);
+
+        // ── v0.3.1 contracts bump ─────────────────────────────────────────
+
+        /// <summary>
+        /// Shape a successful mutation response, folding per-action mutation
+        /// metadata (e.g. {"added": ..., "moved": ...}) into the same JObject
+        /// the Shape() method would return. Replaces the F5 anti-pattern where
+        /// every tool mutated Shape's return value post-hoc.
+        /// </summary>
+        object ShapeMutation(VfxCommitResult commit, bool verbose, JObject mutationPayload);
     }
 
     // ────────────────────────── Error envelope (erratum P-L4: lives here) ──────────────────────────
