@@ -58,14 +58,18 @@ namespace SpiralingStudio.VfxMcp.Tools
         }
 
         // ── ApplyInTransaction — F9 batch dispatch entry point ──
-        // Note: "create" is asset-creation (not a graph mutation) and does not
-        // participate in batches; "list" is read-only.
+        // Note: "create", "delete", and "list" do NOT participate in batches.
+        //   - create / list : asset lifecycle, not graph mutation
+        //   - delete        : asset removal — after AssetDatabase.DeleteAsset, the
+        //                     batch's end-of-batch YAML verifier in VfxTransaction.Commit
+        //                     would run against a missing asset. Asset deletion belongs
+        //                     in its own single-call path, not bundled with graph mutations.
+        // Only "assign" is batchable (it mutates the parent graph by binding a sub-asset).
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
             string action = (opParams?.Value<string>("action") ?? string.Empty).ToLowerInvariant();
             return action switch
             {
-                "delete" => DeleteInner(opParams, scope),
                 "assign" => AssignInner(opParams, scope),
                 _ => throw new System.NotImplementedException(
                     $"vfx_asset action '{action}' not supported in batch"),
