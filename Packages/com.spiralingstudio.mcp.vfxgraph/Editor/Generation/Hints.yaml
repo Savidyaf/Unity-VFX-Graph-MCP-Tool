@@ -1,0 +1,13 @@
+# Hints.yaml — hand-authored hint templates for the VFX MCP generator
+#
+# Phase 3 stub: empty body. Phase 5 populates this with one entry per error
+# code surfaced by the kernel; the override layer (VfxOverrides.GetHint)
+# returns these strings to clients so they can display actionable guidance
+# alongside error envelopes.
+#
+# Schema:
+#
+#   hints:
+#     <errorCode>: <hintTemplate>
+
+hints:

@@ -1,0 +1,18 @@
+# Quirks.yaml — hand-authored overrides for the VFX MCP generator
+#
+# Phase 3 stub: empty. Phase 5 populates this with collision resolutions and
+# alias definitions consumed by VfxOverrides.g.cs (see Emitters/OverridesEmitter.cs).
+#
+# Schema (planned):
+#
+#   collisions:
+#     <shortName>: <preferredFQN>
+#
+#   aliases:
+#     <alias>: <rawName>          # e.g. "type" -> "m_Type"
+#
+#   hints:
+#     <errorCode>: <hintTemplate>
+
+collisions: {}
+aliases: {}
