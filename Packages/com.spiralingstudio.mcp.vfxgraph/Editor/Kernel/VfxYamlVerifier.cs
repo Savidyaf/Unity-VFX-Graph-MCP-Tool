@@ -201,6 +201,15 @@ namespace SpiralingStudio.VfxMcp.Kernel
                     typeFqns.Add(b.TypeFqn);
             }
 
+            // Phase 4-SMOKE discovery: synthetic test fixtures explicitly set
+            // m_TypeFqn lines so the strict matcher works. Real Unity .vfx YAML
+            // never has m_TypeFqn — node identity rides on m_Script GUIDs that
+            // resolve back to a MonoScript asset. Until Phase 5 adds GUID->FQN
+            // resolution, fall back to a warning (not an error) for add ops
+            // when we detect production-mode YAML: at least one MonoBehaviour
+            // block exists but none of them carry m_TypeFqn.
+            bool productionMode = blocks.Count > 0 && typeFqns.Count == 0;
+
             for (int i = 0; i < intent.Ops.Count; i++)
             {
                 var op = intent.Ops[i];
@@ -209,7 +218,7 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 switch (op.Kind)
                 {
                     case "add":
-                        VerifyAdd(op, typeFqns, result);
+                        VerifyAdd(op, typeFqns, result, productionMode);
                         break;
                     case "connect":
                         VerifyConnect(op, byFileId, result);
@@ -227,14 +236,35 @@ namespace SpiralingStudio.VfxMcp.Kernel
         // Task 3B-4: an add op whose ExpectedTypeFqn is not present anywhere
         // in the YAML is reported as `intent_diverged`. Per erratum P-L3 the
         // expected token is NOT scanned for in the YAML.
+        //
+        // Phase 4-SMOKE caveat: when productionMode == true, the YAML lacks
+        // any m_TypeFqn lines (real Unity VFX Graph YAML uses m_Script GUIDs
+        // instead). We can't strict-match by FQN until Phase 5 adds MonoScript
+        // GUID -> type resolution; for now we emit a `yaml_verify_skipped`
+        // warning so the smoke test (and every Phase 4 mutation) does not
+        // false-positive into a fatal `intent_diverged` error.
         private static void VerifyAdd(VfxIntentOp op, HashSet<string> typeFqns,
-                                      VfxYamlVerificationResult result)
+                                      VfxYamlVerificationResult result,
+                                      bool productionMode)
         {
             if (string.IsNullOrEmpty(op.ExpectedTypeFqn))
                 return; // nothing to verify
 
             if (!typeFqns.Contains(op.ExpectedTypeFqn))
             {
+                if (productionMode)
+                {
+                    result.Warnings.Add(new VfxVerifierWarning
+                    {
+                        Code = "yaml_verify_skipped",
+                        OpIndex = op.OpIndex,
+                        Reason = $"Skipped strict verification for {op.ExpectedTypeFqn}: " +
+                                 "production .vfx YAML uses m_Script GUIDs, not m_TypeFqn. " +
+                                 "Phase 5 hardening will add MonoScript resolution.",
+                    });
+                    return;
+                }
+
                 result.Errors.Add(new VfxVerifierError
                 {
                     Code = "intent_diverged",
