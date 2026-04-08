@@ -15,21 +15,17 @@
 // The caller is responsible for emitting an "identity_drifted" warning when
 // the recovery branch returns; we have no logger here on purpose.
 //
-// REFLECTION NOTE: VisualEffectResource is defined in Unity engine's
-// UnityEditor.VFXModule assembly (NOT the package) and is `internal` there,
-// so the InternalsVisibleTo patch on com.unity.visualeffectgraph cannot grant
-// access to it. The only way to translate a graph GUID into a VFXGraph is to
-// reflect on UnityEditor.VFX.VisualEffectResource.GetResourceAtPath. This is
-// a one-time bootstrap, not a runtime hot-path on the catalog. The legacy
-// addon code at Editor/Tools/Vfx/VfxGraphEdit.cs:1166 (GetGraph) uses the
-// same pattern and was the only working approach on Unity 6.x at the time
-// of the v0.3.0 rebuild. See lane 3B handover notes.
-using System;
+// LoadGraph implementation note: VisualEffectResource is defined in Unity
+// engine's UnityEditor.VFXModule assembly and is `internal` there, so the
+// addon cannot reference it directly. The Lane 3C soft-fork bridge file at
+// Packages/com.unity.visualeffectgraph/Editor/VfxMcpKernelHelpers.cs exposes
+// VfxMcpKernelHelpers.LoadGraphFromAsset(VisualEffectAsset) which compiles
+// inside the package (and therefore has full access to VisualEffectResource)
+// and returns a VFXGraph reachable to the addon via InternalsVisibleTo.
+// This is a COMPILE-TIME bridge — zero runtime reflection.
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEditor;
 using UnityEditor.VFX;
-using UnityEngine;
 using UnityEngine.VFX;
 
 namespace SpiralingStudio.VfxMcp.Kernel
@@ -54,7 +50,9 @@ namespace SpiralingStudio.VfxMcp.Kernel
 
             string typeFqn = model.GetType().FullName;
             var parent = model.GetParent();
-            ulong parentFp = parent != null
+            // Per spec: top-level nodes (direct children of the VFXGraph) have
+            // parentFp = 0 ("" in the spec). Match VfxStructuralFingerprint.Compute.
+            ulong parentFp = parent != null && !(parent is VFXGraph)
                 ? VfxStructuralFingerprint.Compute(graphGuid, parent)
                 : 0UL;
 
@@ -111,8 +109,10 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 if (candidate.GetType().FullName != expectedTypeFqn)
                     continue;
 
+                // Per spec: top-level nodes have parentFp = 0; the VFXGraph root
+                // is the recursion stop condition, not a participating parent.
                 var parent = candidate.GetParent();
-                ulong parentFp = parent != null
+                ulong parentFp = parent != null && !(parent is VFXGraph)
                     ? VfxStructuralFingerprint.Compute(graphGuid, parent)
                     : 0UL;
                 if (parentFp != expectedParentFp)
@@ -129,7 +129,8 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 var match = matches[0];
                 ulong newFp = VfxStructuralFingerprint.Compute(graphGuid, match);
                 var newParent = match.GetParent();
-                ulong newParentFp = newParent != null
+                // Top-level nodes use parentFp=0 (see Mint).
+                ulong newParentFp = newParent != null && !(newParent is VFXGraph)
                     ? VfxStructuralFingerprint.Compute(graphGuid, newParent)
                     : 0UL;
                 _sidecar.Put(graphGuid, token, newFp, match.GetType().FullName, newParentFp);
@@ -161,82 +162,20 @@ namespace SpiralingStudio.VfxMcp.Kernel
             return "n_";
         }
 
-        // ── reflection cache (Unity 6 fallback) ──
-        private static Type s_VisualEffectResourceType;
-        private static MethodInfo s_GetResourceAtPathMethod;
-        private static Type s_ExtensionsType;
-        private static MethodInfo s_GetOrCreateGraphMethod;
-
         private static VFXGraph LoadGraph(string graphGuid)
         {
             string assetPath = AssetDatabase.GUIDToAssetPath(graphGuid);
             if (string.IsNullOrEmpty(assetPath)) return null;
 
-            EnsureReflectionCache();
-            if (s_GetResourceAtPathMethod == null || s_GetOrCreateGraphMethod == null)
-                return null;
+            var asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(assetPath);
+            if (asset == null) return null;
 
-            UnityEngine.Object resource;
-            try
-            {
-                resource = s_GetResourceAtPathMethod.Invoke(null, new object[] { assetPath })
-                    as UnityEngine.Object;
-            }
-            catch
-            {
-                return null;
-            }
-            if (resource == null) return null;
-
-            try
-            {
-                return s_GetOrCreateGraphMethod.Invoke(null, new object[] { resource }) as VFXGraph;
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static void EnsureReflectionCache()
-        {
-            if (s_GetResourceAtPathMethod != null && s_GetOrCreateGraphMethod != null)
-                return;
-
-            // VisualEffectResource lives in Unity engine's UnityEditor.VFXModule
-            // assembly and is `internal` there. There is no way to grant access
-            // via InternalsVisibleTo because we don't own UnityEditor.VFXModule.
-            // We resolve it by walking loaded assemblies once and caching the
-            // MethodInfo handles. This mirrors what
-            // Editor/Tools/Vfx/VfxGraphEdit.cs:GetGraph does in legacy addon code.
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                if (s_VisualEffectResourceType == null
-                    && asm.GetName().Name == "UnityEditor.VFXModule")
-                {
-                    s_VisualEffectResourceType = asm.GetType("UnityEditor.VFX.VisualEffectResource");
-                }
-                if (s_ExtensionsType == null
-                    && asm.GetName().Name == "Unity.VisualEffectGraph.Editor")
-                {
-                    s_ExtensionsType = asm.GetType("UnityEditor.VFX.VisualEffectResourceExtensions");
-                }
-                if (s_VisualEffectResourceType != null && s_ExtensionsType != null)
-                    break;
-            }
-
-            if (s_VisualEffectResourceType != null)
-            {
-                s_GetResourceAtPathMethod = s_VisualEffectResourceType.GetMethod(
-                    "GetResourceAtPath",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-            }
-            if (s_ExtensionsType != null)
-            {
-                s_GetOrCreateGraphMethod = s_ExtensionsType.GetMethod(
-                    "GetOrCreateGraph",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-            }
+            // Use the soft-fork bridge from
+            // Packages/com.unity.visualeffectgraph/Editor/VfxMcpKernelHelpers.cs
+            // — internal-static helper compiled inside Unity.VisualEffectGraph.Editor
+            // that hides the engine-internal VisualEffectResource type behind a
+            // public-friendly signature reachable via our InternalsVisibleTo grant.
+            return VfxMcpKernelHelpers.LoadGraphFromAsset(asset);
         }
 
         private static IEnumerable<VFXModel> WalkAllModels(VFXModel root)

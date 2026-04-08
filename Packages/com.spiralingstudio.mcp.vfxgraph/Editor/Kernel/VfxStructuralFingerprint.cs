@@ -67,10 +67,14 @@ namespace SpiralingStudio.VfxMcp.Kernel
         {
             if (model == null) return 0UL;
 
-            // Parent fingerprint (recursive walk upward).
+            // Parent fingerprint (recursive walk upward). Per spec:
+            // "parentFingerprint — recursively computed for the parent; top-level
+            // contexts use ''" — i.e., the VFXGraph is the recursion stop condition,
+            // not a participating parent. Operators/contexts/parameters that hang
+            // directly off the graph have parentKey="" (top-level).
             string parentKey = "";
             var parent = model.GetParent();
-            if (parent != null)
+            if (parent != null && !(parent is VFXGraph))
                 parentKey = Compute(graphGuid, parent).ToString("x16");
 
             // Sibling index among same-typed siblings under the same parent.
@@ -82,6 +86,10 @@ namespace SpiralingStudio.VfxMcp.Kernel
             {
                 int counter = 0;
                 var modelType = model.GetType();
+                // For top-level nodes, the "parent" used for sibling counting is
+                // still the graph (so the same-type-rank is correct), even though
+                // the parent fingerprint above is empty. This is intentional and
+                // matches spec section "Identity model" example.
                 foreach (var sib in parent.children)
                 {
                     if (ReferenceEquals(sib, model))
