@@ -205,33 +205,17 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object SetSpace(JObject @params, bool verbose)
         {
-            string path = @params.Value<string>("graph")
-                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-            string value = @params.Value<string>("value")
-                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
-
-            VfxKernelContainer.BusyGate.EnsureIdle();
-
-            string guid = AssetDatabase.AssetPathToGUID(path);
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            // F-A5 (v0.3.1): runtime probe (commit 44dd0f1) confirmed that
+            // VFXGraph.GetSettings(true, Default) does NOT include "space" — the
+            // coordinate space lives on VFXContext, not VFXGraph. Return an honest
+            // not_implemented envelope rather than dispatching through @graph
+            // (which would surface a confusing setting_not_found at runtime).
+            return VfxKernelContainer.Shaper.ShapeRead(new JObject
             {
-                VfxKernelContainer.NodeOps.SetSetting(path, "@graph", "space", value);
-
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex       = 0,
-                    Kind          = "set_setting",
-                    ExpectedToken = "@graph",
-                    Payload       = new System.Collections.Generic.Dictionary<string, object>
-                    {
-                        ["name"]  = "space",
-                        ["value"] = value,
-                    },
-                });
-
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.Shape(commit, verbose);
-            }
+                ["state"] = "not_implemented",
+                ["hint"]  = "space is per-context (lives on VFXContext, not VFXGraph). " +
+                            "Use vfx_node.set_setting on the relevant context token.",
+            }, verbose);
         }
 
         private static object SetCapacity(JObject @params, bool verbose)
