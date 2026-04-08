@@ -43,6 +43,37 @@ b2ad353 Phase 4C: VfxSubgraphTool + VfxRecipeTool + VfxBatchTool + AddSubgraphRe
 
 ---
 
+## 2.1 v0.3.1 Disposition
+
+Status of each F-item after the v0.3.1 read-side surface + correctness backlog work (commits `e37bd1a..6d6a7a7` on `vfxgraph-rebuild-v0.3`):
+
+| # | v0.3.1 Status | Closing commit(s) | Notes |
+|---|---|---|---|
+| F1 | CLOSED (pre-v0.3.1) | `40f6332` | Fixed during Phase 4a hot-fix (see commit `40f6332`). |
+| F2 | CLOSED (pre-v0.3.1) | `40f6332` | Fixed during Phase 4a hot-fix. |
+| F3 | **CLOSED-PARTIAL** v0.3.1 (Lane A Task 3) | `0c4e533` | `vfx_graph.get_info` now exposes `system_count` and `system_names[]` (real, walked via `VFXSystemNames.GetSystemName(ctx)`). The 3 other requested fields (`space`, `bounds_setting_mode`, `update_mode`) are honest empty-string stubs because they don't exist on `VFXGraph` in Unity 6000.4 — they live on `VFXContext` / `VFXDataParticle`. Per-context dispatch deferred to v0.3.2. |
+| F4 | CLOSED v0.3.1 (Lane A Task 4) | `d103c9f` | `compilation_status` and `get_health` now return `state="not_implemented"` envelopes with hints, not fake `"unknown"` data. |
+| F5 | CLOSED v0.3.1 (Lane B Task 7) | `0836a6d` | `IVfxResponseShaper.ShapeMutation` lands; all 18 mutating tool actions across NodeTool/BlockTool/PropertyTool/SubgraphTool route through it. The post-hoc `obj["added"] = ...` anti-pattern is gone from every transaction-backed action. |
+| F6 | OPEN v0.3.2 | — | `vfx_asset.create` transaction-bypass not addressed in v0.3.1. |
+| F7 | CLOSED v0.3.1 (Lane B Task 8) | `5ee4b6c` | `VfxNodeOps.SetSetting` (both regular and `@graph` branches) now dispatches via new `VfxCoercerDispatch` helper through `VfxCoercers.g.cs`. Closes Vector2/3/4, Color, scalar, and enum gaps. AnimationCurve/Gradient/Matrix4x4 stay on `Convert.ChangeType` fallback because their generated coercers are stubs that ignore the JToken (catalog quality issue, not F7). |
+| F8 | CLOSED (Phase 5-7, pre-v0.3.1) | `bef4a5b` | MonoScript GUID resolver landed in Phase 5-7. |
+| F9 | **CLOSED-FULL** v0.3.1 (Lane B Task 9 + 9-followup) | `8d79b15`, `55adf14` | All 8 tools wired for batch dispatch via `*Inner` extraction pattern. `VfxBatchTool.HandleCommand` now unwraps `TargetInvocationException`-wrapped `NotImplementedException` into `code="not_implemented"`. New test `Batch_ThreeOps_VfxNode_CommitsAsOne` exercises a 3-op batch through reflection dispatch. **Caveat:** `vfx_asset.delete` was initially wired but removed in `55adf14` because delete-in-batch is a latent crash (verifier runs against missing asset). |
+| F10 | DEFERRED v0.3.2 (Lane A Task 5, Path A4-stub) | `89dc59c` | `vfx_diag.list_attributes` and `list_settings` ship as honest `state="not_implemented"` envelopes. Walker/emitter changes for the full path require either a soft-fork bridge addition (`VFXAttributesManager.GetBuiltInNames`) or per-type `[VFXSetting]` reflection — both deferred to v0.3.2. |
+| F11 | OPEN v0.3.2 | — | `ShapeRead` verbose/terse filtering not implemented in v0.3.1. |
+| F12 | OPEN v0.3.2 | — | `GetSetting` AQN comment not added in v0.3.1. |
+| F13 | OPEN v0.3.2 | — | Stub message wording cleanup deferred. |
+| F14 | OPEN v0.3.2 | — | Smoke test `vfx_property.add` assertion not tightened. |
+| F15 | CLOSED v0.3.1 (Lane B Task 10) | `6d6a7a7` | `IVfxNodeOps.MoveNode` lands with real impl. `VfxNodeTool.Move` rewritten via outer/`MoveInner` pattern; intent op now records `Kind="move"`. `VfxYamlVerifier` has explicit `case "move":` arm. New `VfxNodeMoveTests.Move_UpdatesPositionAndListReflectsIt` test. **Caveat:** test doesn't verify save/reload persistence — `m_UIPosition` survival is the F15 viability question to validate in Lane C. |
+
+**Items NEW to v0.3.1 (not in original F1–F15):**
+
+| # | Status | Closing commit | Notes |
+|---|---|---|---|
+| F-A1 (`vfx_node.list`) | CLOSED v0.3.1 (Lane A Task 2) | `9f66395` | Read-side enumeration with stable token recovery. Closes the dominant downstream-agent gap that motivated v0.3.1. |
+| F-A5 (`@graph` SetSetting dispatch) | CLOSED-PARTIAL v0.3.1 (Lane A Task 6 + follow-up) | `44dd0f1`, `1f4cdcc` | `VfxNodeOps.SetSetting` `@graph` branch lands. `vfx_graph.set_data_settings` uses it via conditional dispatch. `set_space`/`set_capacity`/`set_bounds` are honest `not_implemented` stubs (runtime probe confirmed `space` doesn't exist on VFXGraph; capacity/bounds are per-system). |
+
+---
+
 ## 3. Erratum Compliance Matrix
 
 | Erratum | Status | Evidence |

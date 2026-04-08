@@ -1,5 +1,102 @@
 # Changelog
 
+## [Unreleased] - v0.3.1 read-side surface + Phase 4a correctness backlog
+
+### Added
+
+- **`vfx_node.list`** — paged enumeration of every node in a graph with
+  stable tokens (read-side surface; closes the dominant downstream-agent
+  gap that motivated v0.3.1). Walks `VFXGraph.children` + recurses one
+  level into `VFXContext.children` for blocks. Mints/recovers tokens via
+  `VfxIdentity.Mint`. Returns `{graph_path, total, offset, page_size,
+  nodes[]}` with each node carrying `token`, `type`, `x`, `y`,
+  `parent_token`, `category`, `block_index`.
+- **`vfx_graph.get_info`** now exposes `space`, `system_count`,
+  `system_names[]`, `bounds_setting_mode`, `update_mode` (Phase 4a F3 —
+  partial). `system_count` and `system_names` are real, walked via
+  `VFXSystemNames.GetSystemName(ctx)` across top-level contexts. The
+  other 3 keys are honest empty-string stubs because they live on
+  `VFXContext` / `VFXDataParticle`, not on `VFXGraph` in Unity 6000.4.
+- **`IVfxResponseShaper.ShapeMutation`** — single chokepoint for shaping
+  mutating-action responses (Phase 4a F5). Replaces the post-hoc JObject
+  mutation pattern across all 18 mutating actions in `VfxNodeTool` /
+  `VfxBlockTool` / `VfxPropertyTool` / `VfxSubgraphTool`.
+- **`IVfxNodeOps.MoveNode`** — first-class node-position mutation
+  (Phase 4a F15). Replaces the previous `set_setting`-based "position"
+  hack. `VfxNodeTool.move` records intent op `Kind="move"` and the YAML
+  verifier accepts the new kind via an explicit `case "move":` arm.
+- **`VfxCoercerDispatch`** — typed coercion helper that dispatches
+  through `VfxCoercers.g.cs` for `float`/`int`/`uint`/`bool`/`string`/
+  `Vector2`/`Vector3`/`Vector4`/`Color` plus inline enum
+  name/integer parse (Phase 4a F7). Closes the silent-drop gaps that
+  `Convert.ChangeType` had for non-trivial setting types.
+- **Multi-tool batch dispatch** for the 6 batchable tools — `vfx_node`,
+  `vfx_block`, `vfx_property`, `vfx_subgraph`, `vfx_asset.assign`,
+  `vfx_graph.{save, set_data_settings}` (Phase 4a F9). Each mutating
+  action now follows the outer/`*Inner` pattern: outer opens BusyGate +
+  Transaction.Begin + ShapeMutation; inner takes a live
+  `VfxTransactionScope` and does only the NodeOps call + `scope.Record`.
+  `VfxBatchTool` dispatches via reflection on `ApplyInTransaction` and
+  unwraps `TargetInvocationException`-wrapped `NotImplementedException`
+  into `code="not_implemented"` envelopes.
+- **New tests:** `VfxNodeListTests` (2 tests — list + GetInfo expansion),
+  `VfxResponseShaperTests` (3 new ShapeMutation cases),
+  `VfxNodeOpsCoercerTests` (1 round-trip test), `VfxBatchTests` (1
+  multi-tool batch test), `VfxNodeMoveTests` (1 move + list round-trip).
+  Total: 107 (v0.3.0 baseline) → 115 EditMode tests pass, 0 fail.
+- **`VfxKernelContracts.cs`** contracts bump (Lane 0): adds
+  `IVfxNodeOps.ListNodes`, `IVfxNodeOps.MoveNode`,
+  `IVfxResponseShaper.ShapeMutation`, plus the `VfxNodeListEntry` record
+  class. Single locked-file commit.
+
+### Changed
+
+- **`vfx_graph.compilation_status`** and **`vfx_graph.get_health`** now
+  return `state="not_implemented"` envelopes with hints (Phase 4a F4),
+  not fake `"unknown"` data. Clients can distinguish "not implemented"
+  from a stale compile result.
+- **`vfx_graph.set_capacity`**, **`set_bounds`**, and **`set_space`**
+  return honest `state="not_implemented"` envelopes with hints pointing
+  at `vfx_node.set_setting` on the relevant context (capacity lives on
+  `VFXBasicInitialize`, bounds are per-system on `VFXDataParticle`,
+  space lives on `VFXContext`). Replaces the old `"Lane 4B pending"`
+  stub. Runtime probe at `1f4cdcc` confirmed `space` doesn't exist on
+  `VFXGraph`.
+- **`vfx_graph.set_data_settings`** uses conditional dispatch through
+  the new `@graph` synthetic-token branch in `VfxNodeOps.SetSetting`
+  (Phase 4a F-A5). If the named setting is a `VFXGraph`-level field it
+  routes through the @graph branch; otherwise the kernel throws
+  `setting_not_found` and the tool surfaces a `not_implemented`
+  envelope with a hint.
+- **`VfxNodeOps.SetSetting`** non-`SerializableType` branch (and the
+  new `@graph` branch) dispatches via `VfxCoercerDispatch` instead of
+  `Convert.ChangeType` (Phase 4a F7).
+- **`VfxBatchTool.HandleCommand`** outer catch chain gains a
+  `TargetInvocationException` arm that unwraps `NotImplementedException`
+  into `code="not_implemented"` so callers can distinguish "this action
+  doesn't batch yet" from a real bug.
+
+### Deferred
+
+- **`vfx_diag.list_attributes`** and **`list_settings`** ship as honest
+  `state="not_implemented"` envelopes (Phase 4a F10, Path A4-stub per
+  spec §4.1). The walker/emitter changes for the full path require
+  either a soft-fork bridge addition (`VFXAttributesManager.GetBuiltInNames`)
+  or per-type `[VFXSetting]` reflection — both deferred to v0.3.2.
+- **`vfx_asset.delete`** is NOT batchable (initially wired in `8d79b15`,
+  removed in `55adf14`). After `AssetDatabase.DeleteAsset`, the batch's
+  end-of-batch verifier would run against a missing asset. Asset
+  deletion belongs in its own single-call path.
+- **F3 partial keys** (`space`, `bounds_setting_mode`, `update_mode` on
+  `vfx_graph.get_info`) — empty-string stubs in v0.3.1; per-context
+  dispatch deferred to v0.3.2.
+
+### References
+
+- **Design**: [`docs/superpowers/specs/2026-04-08-vfx-mcp-v0.3.1-read-side-and-correctness-design.md`](../../../docs/superpowers/specs/2026-04-08-vfx-mcp-v0.3.1-read-side-and-correctness-design.md)
+- **Plan**: [`docs/superpowers/plans/2026-04-08-vfx-mcp-v0.3.1-read-side-and-correctness-plan.md`](../../../docs/superpowers/plans/2026-04-08-vfx-mcp-v0.3.1-read-side-and-correctness-plan.md)
+- **Phase 4a review** (with v0.3.1 disposition table): [`docs/superpowers/specs/2026-04-07-rebuild-phase4-review.md`](../../../docs/superpowers/specs/2026-04-07-rebuild-phase4-review.md) §2.1
+
 ## [0.3.0] - 2026-04-08
 
 ### Added — complete rebuild
