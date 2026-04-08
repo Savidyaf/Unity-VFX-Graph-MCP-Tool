@@ -68,11 +68,13 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction stub — lane C's batch dispatcher finds this via reflection ──
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──
+        // VfxDiagTool is read-only (catalog inspection and diagnostics); no
+        // mutating actions exist, so it cannot participate in batches.
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
             throw new System.NotImplementedException(
-                "VfxDiagTool.ApplyInTransaction will be wired in phase 4C batch integration");
+                $"{nameof(VfxDiagTool)} has no mutating actions and cannot participate in batches");
         }
 
         // ── per-action private helpers ──

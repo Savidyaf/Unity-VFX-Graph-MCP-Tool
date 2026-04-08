@@ -70,11 +70,21 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction stub — lane C's batch dispatcher finds this via reflection ──
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──
+        // Note: compile and discard_changes do not open a transaction, and
+        // set_space/set_capacity/set_bounds are not_implemented stubs — none of
+        // those participate in batches. Only save and set_data_settings are
+        // transaction-backed.
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
-            throw new System.NotImplementedException(
-                "VfxGraphTool.ApplyInTransaction will be wired in phase 4C batch integration");
+            string action = (opParams?.Value<string>("action") ?? string.Empty).ToLowerInvariant();
+            return action switch
+            {
+                "save"              => SaveInner(opParams, scope),
+                "set_data_settings" => SetDataSettingsInner(opParams, scope),
+                _ => throw new System.NotImplementedException(
+                    $"vfx_graph action '{action}' not supported in batch"),
+            };
         }
 
         // ── per-action private helpers ──
@@ -178,18 +188,27 @@ namespace SpiralingStudio.VfxMcp.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.Save))
             {
-                // Save doesn't record ops; the YAML verifier sees the current on-disk
-                // state match an empty intent list (no-op commit).
-                VisualEffectAsset asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(path);
-                if (asset != null)
-                    AssetDatabase.SaveAssetIfDirty(asset);
-
+                var payload = (JObject)SaveInner(@params, scope);
                 var commit = scope.Commit();
                 if (!commit.Ok)
                     return VfxKernelContainer.Shaper.Shape(commit, verbose);
 
-                return new JObject { ["saved"] = path };
+                return payload;
             }
+        }
+
+        internal static object SaveInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            // Save doesn't record ops; the YAML verifier sees the current on-disk
+            // state match an empty intent list (no-op commit).
+            VisualEffectAsset asset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(path);
+            if (asset != null)
+                AssetDatabase.SaveAssetIfDirty(asset);
+
+            return new JObject { ["saved"] = path };
         }
 
         private static object Compile(JObject @params, bool verbose)
@@ -250,8 +269,6 @@ namespace SpiralingStudio.VfxMcp.Tools
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
             string name = @params.Value<string>("name")
                 ?? throw new VfxValidationException("missing_required_param", "name is required", null);
-            object value = @params["value"]?.ToObject<object>()
-                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
             // F-A5 (v0.3.1): conditional dispatch. If 'name' is a VFXGraph-level setting,
             // route through the @graph branch on NodeOps.SetSetting. Otherwise the kernel
@@ -262,7 +279,7 @@ namespace SpiralingStudio.VfxMcp.Tools
             {
                 try
                 {
-                    VfxKernelContainer.NodeOps.SetSetting(path, "@graph", name, value);
+                    SetDataSettingsInner(@params, scope);
                 }
                 catch (VfxValidationException ex) when (ex.Code == "setting_not_found")
                 {
@@ -274,21 +291,42 @@ namespace SpiralingStudio.VfxMcp.Tools
                     }, verbose);
                 }
 
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex       = 0,
-                    Kind          = "set_setting",
-                    ExpectedToken = "@graph",
-                    Payload       = new System.Collections.Generic.Dictionary<string, object>
-                    {
-                        ["name"]  = name,
-                        ["value"] = value,
-                    },
-                });
-
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
+        }
+
+        internal static object SetDataSettingsInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+            string name = @params.Value<string>("name")
+                ?? throw new VfxValidationException("missing_required_param", "name is required", null);
+            object value = @params["value"]?.ToObject<object>()
+                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
+
+            VfxKernelContainer.NodeOps.SetSetting(path, "@graph", name, value);
+
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex       = 0,
+                Kind          = "set_setting",
+                ExpectedToken = "@graph",
+                Payload       = new System.Collections.Generic.Dictionary<string, object>
+                {
+                    ["name"]  = name,
+                    ["value"] = value,
+                },
+            });
+
+            return new JObject
+            {
+                ["set_data_settings"] = new JObject
+                {
+                    ["name"]  = name,
+                    ["value"] = value?.ToString(),
+                },
+            };
         }
 
         private static object DiscardChanges(JObject @params, bool verbose)

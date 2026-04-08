@@ -61,16 +61,41 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction stub — lane C's batch dispatcher finds this via reflection ──
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
-            throw new System.NotImplementedException(
-                "v0.3.1 batch integration");
+            string action = (opParams?.Value<string>("action") ?? string.Empty).ToLowerInvariant();
+            return action switch
+            {
+                "add"            => AddInner(opParams, scope),
+                "remove"         => RemoveInner(opParams, scope),
+                "reorder"        => ReorderInner(opParams, scope),
+                "set_activation" => SetActivationInner(opParams, scope),
+                "set_attribute"  => SetAttributeInner(opParams, scope),
+                _ => throw new System.NotImplementedException(
+                    $"vfx_block action '{action}' not supported in batch"),
+            };
         }
 
         // ────────────────────────── add ──────────────────────────
 
         private static object Add(JObject @params, bool verbose)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)AddInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object AddInner(JObject @params, VfxTransactionScope scope)
         {
             string path         = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
@@ -80,75 +105,93 @@ namespace SpiralingStudio.VfxMcp.Tools
                 ?? throw new VfxValidationException("missing_required_param", "type is required", null);
             int index = @params.Value<int?>("index") ?? -1;
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
-            string guid = AssetDatabase.AssetPathToGUID(path);
+            string token = VfxKernelContainer.NodeOps.AddBlock(path, parentToken, typeFqn, index);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            scope.Record(new VfxIntentOp
             {
-                string token = VfxKernelContainer.NodeOps.AddBlock(path, parentToken, typeFqn, index);
-
-                scope.Record(new VfxIntentOp
+                OpIndex         = 0,
+                Kind            = "add",
+                ExpectedToken   = token,
+                ExpectedTypeFqn = typeFqn,
+                ParentToken     = parentToken,
+                Payload         = new Dictionary<string, object>
                 {
-                    OpIndex         = 0,
-                    Kind            = "add",
-                    ExpectedToken   = token,
-                    ExpectedTypeFqn = typeFqn,
-                    ParentToken     = parentToken,
-                    Payload         = new Dictionary<string, object>
-                    {
-                        ["parent_token"] = parentToken,
-                        ["index"]        = index,
-                    },
-                });
+                    ["parent_token"] = parentToken,
+                    ["index"]        = index,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["added"] = new JArray(new JObject
                 {
-                    ["added"] = new JArray(new JObject
-                    {
-                        ["token"]        = token,
-                        ["type"]         = typeFqn,
-                        ["parent_token"] = parentToken,
-                    }),
-                });
-            }
+                    ["token"]        = token,
+                    ["type"]         = typeFqn,
+                    ["parent_token"] = parentToken,
+                }),
+            };
         }
 
         // ────────────────────────── remove ──────────────────────────
 
         private static object Remove(JObject @params, bool verbose)
         {
-            string path  = @params.Value<string>("graph")
+            string path = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-            string token = @params.Value<string>("token")
-                ?? throw new VfxValidationException("missing_required_param", "token is required", null);
 
             VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
 
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                VfxKernelContainer.NodeOps.RemoveNode(path, token);
-
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex       = 0,
-                    Kind          = "remove",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object> { ["token"] = token },
-                });
-
+                var payload = (JObject)RemoveInner(@params, scope);
                 var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["removed"] = new JArray(new JObject { ["token"] = token }),
-                });
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
             }
+        }
+
+        internal static object RemoveInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path  = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+            string token = @params.Value<string>("token")
+                ?? throw new VfxValidationException("missing_required_param", "token is required", null);
+
+            VfxKernelContainer.NodeOps.RemoveNode(path, token);
+
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex       = 0,
+                Kind          = "remove",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object> { ["token"] = token },
+            });
+
+            return new JObject
+            {
+                ["removed"] = new JArray(new JObject { ["token"] = token }),
+            };
         }
 
         // ────────────────────────── reorder ──────────────────────────
 
         private static object Reorder(JObject @params, bool verbose)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)ReorderInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object ReorderInner(JObject @params, VfxTransactionScope scope)
         {
             string path  = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
@@ -157,49 +200,43 @@ namespace SpiralingStudio.VfxMcp.Tools
             int newIndex = @params.Value<int?>("new_index")
                 ?? throw new VfxValidationException("missing_required_param", "new_index is required", null);
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
+            var model = VfxKernelContainer.Identity.Resolve(guid, token);
+            if (model == null)
+                throw new VfxIdentityException("node_lost",
+                    $"Token {token} not found in {path}", null);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            var block = model as VFXBlock;
+            if (block == null)
+                throw new VfxValidationException("invalid_node",
+                    $"Token {token} ({model.GetType().Name}) is not a VFXBlock", null);
+
+            var parent = block.GetParent() as VFXContext;
+            if (parent == null)
+                throw new VfxValidationException("invalid_parent",
+                    $"Block {token} has no parent VFXContext", null);
+
+            // Remove then re-insert at the new index.
+            // VFXModel.RemoveChild + AddChild — both verified in VFXModel.cs:165,145
+            parent.RemoveChild(block, notify: false);
+            parent.AddChild(block, newIndex, notify: true);
+
+            scope.Record(new VfxIntentOp
             {
-                var model = VfxKernelContainer.Identity.Resolve(guid, token);
-                if (model == null)
-                    throw new VfxIdentityException("node_lost",
-                        $"Token {token} not found in {path}", null);
-
-                var block = model as VFXBlock;
-                if (block == null)
-                    throw new VfxValidationException("invalid_node",
-                        $"Token {token} ({model.GetType().Name}) is not a VFXBlock", null);
-
-                var parent = block.GetParent() as VFXContext;
-                if (parent == null)
-                    throw new VfxValidationException("invalid_parent",
-                        $"Block {token} has no parent VFXContext", null);
-
-                // Remove then re-insert at the new index.
-                // VFXModel.RemoveChild + AddChild — both verified in VFXModel.cs:165,145
-                parent.RemoveChild(block, notify: false);
-                parent.AddChild(block, newIndex, notify: true);
-
-                scope.Record(new VfxIntentOp
+                OpIndex       = 0,
+                Kind          = "set_setting",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
                 {
-                    OpIndex       = 0,
-                    Kind          = "set_setting",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object>
-                    {
-                        ["token"]     = token,
-                        ["new_index"] = newIndex,
-                    },
-                });
+                    ["token"]     = token,
+                    ["new_index"] = newIndex,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["reordered"] = new JObject { ["token"] = token, ["new_index"] = newIndex },
-                });
-            }
+            return new JObject
+            {
+                ["reordered"] = new JObject { ["token"] = token, ["new_index"] = newIndex },
+            };
         }
 
         // ────────────────────────── set_activation ──────────────────────────
@@ -210,6 +247,22 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object SetActivation(JObject @params, bool verbose)
         {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)SetActivationInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object SetActivationInner(JObject @params, VfxTransactionScope scope)
+        {
             string path  = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
             string token = @params.Value<string>("token")
@@ -217,56 +270,66 @@ namespace SpiralingStudio.VfxMcp.Tools
             bool active = @params.Value<bool?>("active")
                 ?? throw new VfxValidationException("missing_required_param", "active is required", null);
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
+            var model = VfxKernelContainer.Identity.Resolve(guid, token);
+            if (model == null)
+                throw new VfxIdentityException("node_lost",
+                    $"Token {token} not found in {path}", null);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            var block = model as VFXBlock;
+            if (block == null)
+                throw new VfxValidationException("invalid_node",
+                    $"Token {token} ({model.GetType().Name}) is not a VFXBlock", null);
+
+            // activationSlot is the bool slot named "_vfx_enabled" (VFXBlock.cs:11,33)
+            var activSlot = block.activationSlot;
+            if (activSlot == null)
+                throw new VfxValidationException("slot_not_found",
+                    $"Block {token} ({block.GetType().Name}) has no activationSlot", null);
+
+            activSlot.value = active;
+
+            scope.Record(new VfxIntentOp
             {
-                var model = VfxKernelContainer.Identity.Resolve(guid, token);
-                if (model == null)
-                    throw new VfxIdentityException("node_lost",
-                        $"Token {token} not found in {path}", null);
-
-                var block = model as VFXBlock;
-                if (block == null)
-                    throw new VfxValidationException("invalid_node",
-                        $"Token {token} ({model.GetType().Name}) is not a VFXBlock", null);
-
-                // activationSlot is the bool slot named "_vfx_enabled" (VFXBlock.cs:11,33)
-                var activSlot = block.activationSlot;
-                if (activSlot == null)
-                    throw new VfxValidationException("slot_not_found",
-                        $"Block {token} ({block.GetType().Name}) has no activationSlot", null);
-
-                activSlot.value = active;
-
-                scope.Record(new VfxIntentOp
+                OpIndex       = 0,
+                Kind          = "set_setting",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
                 {
-                    OpIndex       = 0,
-                    Kind          = "set_setting",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object>
-                    {
-                        ["token"]  = token,
-                        ["active"] = active,
-                    },
-                });
+                    ["token"]  = token,
+                    ["active"] = active,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["set_activation"] = new JObject
                 {
-                    ["set_activation"] = new JObject
-                    {
-                        ["token"]  = token,
-                        ["active"] = active,
-                    },
-                });
-            }
+                    ["token"]  = token,
+                    ["active"] = active,
+                },
+            };
         }
 
         // ────────────────────────── set_attribute ──────────────────────────
 
         private static object SetAttribute(JObject @params, bool verbose)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)SetAttributeInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object SetAttributeInner(JObject @params, VfxTransactionScope scope)
         {
             string path           = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
@@ -277,37 +340,30 @@ namespace SpiralingStudio.VfxMcp.Tools
             object value          = @params["value"]?.ToObject<object>()
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
-            string guid = AssetDatabase.AssetPathToGUID(path);
+            // Delegate to NodeOps.SetProperty — operates on input slots by name.
+            VfxKernelContainer.NodeOps.SetProperty(path, token, attributeName, value);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            scope.Record(new VfxIntentOp
             {
-                // Delegate to NodeOps.SetProperty — operates on input slots by name.
-                VfxKernelContainer.NodeOps.SetProperty(path, token, attributeName, value);
-
-                scope.Record(new VfxIntentOp
+                OpIndex       = 0,
+                Kind          = "set_property",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
                 {
-                    OpIndex       = 0,
-                    Kind          = "set_property",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object>
-                    {
-                        ["attribute_name"] = attributeName,
-                        ["value"]          = value,
-                    },
-                });
+                    ["attribute_name"] = attributeName,
+                    ["value"]          = value,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["set_attribute"] = new JObject
                 {
-                    ["set_attribute"] = new JObject
-                    {
-                        ["token"]          = token,
-                        ["attribute_name"] = attributeName,
-                        ["value"]          = value?.ToString(),
-                    },
-                });
-            }
+                    ["token"]          = token,
+                    ["attribute_name"] = attributeName,
+                    ["value"]          = value?.ToString(),
+                },
+            };
         }
 
         // ────────────────────────── list_attributes (read-only stub) ──────────────────────────

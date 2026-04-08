@@ -55,6 +55,19 @@ namespace SpiralingStudio.VfxMcp.Tools
                     Details = ex.Details,
                 });
             }
+            catch (System.Reflection.TargetInvocationException tex)
+                when (tex.InnerException is System.NotImplementedException)
+            {
+                // MethodInfo.Invoke wraps inner exceptions in TargetInvocationException,
+                // so NotImplementedException from a tool's ApplyInTransaction arrives
+                // wrapped. Unwrap it into a friendly not_implemented envelope.
+                return VfxKernelContainer.Shaper.ShapeError(new VfxErrorEnvelope
+                {
+                    Code    = "not_implemented",
+                    Message = tex.InnerException.Message,
+                    Hint    = "This action is not yet wired for batch dispatch — see Phase 4a F9.",
+                });
+            }
             catch (System.Exception ex)
             {
                 return VfxKernelContainer.Shaper.ShapeError(new VfxErrorEnvelope

@@ -57,11 +57,19 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction stub — lane C's batch dispatcher finds this via reflection ──
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──
+        // Note: "create" is asset-creation (not a graph mutation) and does not
+        // participate in batches; "list" is read-only.
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
-            throw new System.NotImplementedException(
-                "VfxAssetTool.ApplyInTransaction will be wired in phase 4C batch integration");
+            string action = (opParams?.Value<string>("action") ?? string.Empty).ToLowerInvariant();
+            return action switch
+            {
+                "delete" => DeleteInner(opParams, scope),
+                "assign" => AssignInner(opParams, scope),
+                _ => throw new System.NotImplementedException(
+                    $"vfx_asset action '{action}' not supported in batch"),
+            };
         }
 
         // ── per-action private helpers ──
@@ -142,14 +150,23 @@ namespace SpiralingStudio.VfxMcp.Tools
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                bool deleted = AssetDatabase.DeleteAsset(path);
-                if (!deleted)
-                    throw new VfxValidationException("asset_not_found",
-                        $"Asset at path '{path}' could not be deleted. It may not exist.", null);
-
+                DeleteInner(@params, scope);
                 var commit = scope.Commit();
                 return VfxKernelContainer.Shaper.Shape(commit, verbose);
             }
+        }
+
+        internal static object DeleteInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path = @params.Value<string>("path")
+                ?? throw new VfxValidationException("missing_required_param", "path is required", null);
+
+            bool deleted = AssetDatabase.DeleteAsset(path);
+            if (!deleted)
+                throw new VfxValidationException("asset_not_found",
+                    $"Asset at path '{path}' could not be deleted. It may not exist.", null);
+
+            return new JObject { ["deleted"] = path };
         }
 
         private static object Assign(JObject @params, bool verbose)
@@ -157,36 +174,45 @@ namespace SpiralingStudio.VfxMcp.Tools
             string path = @params.Value<string>("path")
                 ?? throw new VfxValidationException("missing_required_param", "path is required", null);
 
-            string gameObjectName = @params.Value<string>("gameObject")
-                ?? throw new VfxValidationException("missing_required_param", "gameObject is required", null);
-
             VfxKernelContainer.BusyGate.EnsureIdle();
 
             string guid = AssetDatabase.AssetPathToGUID(path);
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                GameObject go = GameObject.Find(gameObjectName);
-                if (go == null)
-                    throw new VfxValidationException("gameobject_not_found",
-                        $"GameObject '{gameObjectName}' not found in the active scene.", null);
-
-                VisualEffect comp = go.GetComponent<VisualEffect>();
-                if (comp == null)
-                    comp = go.AddComponent<VisualEffect>();
-
-                VisualEffectAsset vfxAsset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(path);
-                if (vfxAsset == null)
-                    throw new VfxValidationException("asset_not_found",
-                        $"VisualEffectAsset not found at path '{path}'.", null);
-
-                comp.visualEffectAsset = vfxAsset;
-
+                var payload = (JObject)AssignInner(@params, scope);
                 var commit = scope.Commit();
                 if (!commit.Ok)
                     return VfxKernelContainer.Shaper.Shape(commit, verbose);
 
-                return new JObject { ["assigned"] = path };
+                return payload;
             }
+        }
+
+        internal static object AssignInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path = @params.Value<string>("path")
+                ?? throw new VfxValidationException("missing_required_param", "path is required", null);
+
+            string gameObjectName = @params.Value<string>("gameObject")
+                ?? throw new VfxValidationException("missing_required_param", "gameObject is required", null);
+
+            GameObject go = GameObject.Find(gameObjectName);
+            if (go == null)
+                throw new VfxValidationException("gameobject_not_found",
+                    $"GameObject '{gameObjectName}' not found in the active scene.", null);
+
+            VisualEffect comp = go.GetComponent<VisualEffect>();
+            if (comp == null)
+                comp = go.AddComponent<VisualEffect>();
+
+            VisualEffectAsset vfxAsset = AssetDatabase.LoadAssetAtPath<VisualEffectAsset>(path);
+            if (vfxAsset == null)
+                throw new VfxValidationException("asset_not_found",
+                    $"VisualEffectAsset not found at path '{path}'.", null);
+
+            comp.visualEffectAsset = vfxAsset;
+
+            return new JObject { ["assigned"] = path };
         }
     }
 }

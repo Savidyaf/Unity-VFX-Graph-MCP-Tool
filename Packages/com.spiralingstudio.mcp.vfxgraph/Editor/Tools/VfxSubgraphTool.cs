@@ -86,32 +86,21 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction — REAL impl for "add_ref" only ──────────────────
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──────────────────
         // VfxBatchTool discovers this via reflection and calls it inside an active
-        // VfxTransactionScope.  Only "add_ref" is supported in v0.3.0.
+        // VfxTransactionScope. Only transaction-backed actions are wired here —
+        // "create" is an asset-creation op, not a graph mutation, so it does not
+        // participate in batches.
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
             string action = (opParams?.Value<string>("action") ?? string.Empty).ToLowerInvariant();
-            if (action != "add_ref")
-                throw new VfxValidationException("unsupported_batch_action",
-                    $"vfx_subgraph batch only supports 'add_ref' in v0.3.0; got '{action}'", null);
-
-            string path = opParams.Value<string>("graph")
-                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-            string subgraph = opParams.Value<string>("subgraph")
-                ?? throw new VfxValidationException("missing_required_param", "subgraph is required", null);
-            float x = opParams.Value<float?>("x") ?? 0f;
-            float y = opParams.Value<float?>("y") ?? 0f;
-
-            string token = VfxKernelContainer.NodeOps.AddSubgraphRef(path, subgraph, new Vector2(x, y));
-            scope.Record(new VfxIntentOp
+            return action switch
             {
-                Kind            = "add",
-                ExpectedToken   = token,
-                ExpectedTypeFqn = "UnityEditor.VFX.VFXSubgraphRef",
-            });
-
-            return new JObject { ["token"] = token, ["subgraph"] = subgraph };
+                "add_ref"      => AddRefInner(opParams, scope),
+                "set_override" => SetOverrideInner(opParams, scope),
+                _ => throw new System.NotImplementedException(
+                    $"vfx_subgraph action '{action}' not supported in batch"),
+            };
         }
 
         // ── per-action private helpers ─────────────────────────────────────────
@@ -152,38 +141,47 @@ namespace SpiralingStudio.VfxMcp.Tools
         {
             string path = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-            string subgraph = @params.Value<string>("subgraph")
-                ?? throw new VfxValidationException("missing_required_param", "subgraph is required", null);
-            float x = @params.Value<float?>("x") ?? 0f;
-            float y = @params.Value<float?>("y") ?? 0f;
 
             VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
 
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                string token = VfxKernelContainer.NodeOps.AddSubgraphRef(path, subgraph, new Vector2(x, y));
-
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex         = 0,
-                    Kind            = "add",
-                    ExpectedToken   = token,
-                    ExpectedTypeFqn = "UnityEditor.VFX.VFXSubgraphRef",
-                    Payload         = new Dictionary<string, object>
-                    {
-                        ["subgraph"] = subgraph,
-                        ["x"] = x,
-                        ["y"] = y,
-                    },
-                });
-
+                var payload = (JObject)AddRefInner(@params, scope);
                 var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["added"] = new JObject { ["token"] = token, ["subgraph"] = subgraph },
-                });
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
             }
+        }
+
+        internal static object AddRefInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+            string subgraph = @params.Value<string>("subgraph")
+                ?? throw new VfxValidationException("missing_required_param", "subgraph is required", null);
+            float x = @params.Value<float?>("x") ?? 0f;
+            float y = @params.Value<float?>("y") ?? 0f;
+
+            string token = VfxKernelContainer.NodeOps.AddSubgraphRef(path, subgraph, new Vector2(x, y));
+
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex         = 0,
+                Kind            = "add",
+                ExpectedToken   = token,
+                ExpectedTypeFqn = "UnityEditor.VFX.VFXSubgraphRef",
+                Payload         = new Dictionary<string, object>
+                {
+                    ["subgraph"] = subgraph,
+                    ["x"] = x,
+                    ["y"] = y,
+                },
+            });
+
+            return new JObject
+            {
+                ["added"] = new JObject { ["token"] = token, ["subgraph"] = subgraph },
+            };
         }
 
         private static object GetExposed(JObject @params, bool verbose)
@@ -200,6 +198,22 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object SetOverride(JObject @params, bool verbose)
         {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)SetOverrideInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object SetOverrideInner(JObject @params, VfxTransactionScope scope)
+        {
             string path  = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
             string token = @params.Value<string>("token")
@@ -209,37 +223,30 @@ namespace SpiralingStudio.VfxMcp.Tools
             object value = @params["value"]?.ToObject<object>()
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
-            string guid = AssetDatabase.AssetPathToGUID(path);
+            // Subgraph overrides ride the standard slot system.
+            VfxKernelContainer.NodeOps.SetProperty(path, token, name, value);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            scope.Record(new VfxIntentOp
             {
-                // Subgraph overrides ride the standard slot system.
-                VfxKernelContainer.NodeOps.SetProperty(path, token, name, value);
-
-                scope.Record(new VfxIntentOp
+                OpIndex       = 0,
+                Kind          = "set_property",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
                 {
-                    OpIndex       = 0,
-                    Kind          = "set_property",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object>
-                    {
-                        ["name"]  = name,
-                        ["value"] = value,
-                    },
-                });
+                    ["name"]  = name,
+                    ["value"] = value,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["set_override"] = new JObject
                 {
-                    ["set_override"] = new JObject
-                    {
-                        ["token"] = token,
-                        ["name"]  = name,
-                        ["value"] = value?.ToString(),
-                    },
-                });
-            }
+                    ["token"] = token,
+                    ["name"]  = name,
+                    ["value"] = value?.ToString(),
+                },
+            };
         }
     }
 }

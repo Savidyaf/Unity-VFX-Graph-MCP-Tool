@@ -55,11 +55,13 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction stub — wired in v0.3.1 ─────────────────────────
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──
+        // VfxRecipeTool is a scaffold with no mutating actions in v0.3.x; recipes
+        // are deferred to a later release.
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
             throw new System.NotImplementedException(
-                "VfxRecipeTool.ApplyInTransaction will be wired in v0.3.1");
+                $"{nameof(VfxRecipeTool)} has no mutating actions and cannot participate in batches");
         }
 
         // ── per-action private helpers ─────────────────────────────────────────

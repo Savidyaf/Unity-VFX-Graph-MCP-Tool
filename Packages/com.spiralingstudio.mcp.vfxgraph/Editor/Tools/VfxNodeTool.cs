@@ -71,16 +71,44 @@ namespace SpiralingStudio.VfxMcp.Tools
             }
         }
 
-        // ── ApplyInTransaction stub — lane C's batch dispatcher finds this via reflection ──
+        // ── ApplyInTransaction — F9 batch dispatch entry point ──
+        // Note: "move" is intentionally absent — Task 10 rewrites it via F15.
         internal static object ApplyInTransaction(JObject opParams, VfxTransactionScope scope)
         {
-            throw new System.NotImplementedException(
-                "v0.3.1 batch integration");
+            string action = (opParams?.Value<string>("action") ?? string.Empty).ToLowerInvariant();
+            return action switch
+            {
+                "add"          => AddInner(opParams, scope),
+                "remove"       => RemoveInner(opParams, scope),
+                "duplicate"    => DuplicateInner(opParams, scope),
+                "connect"      => ConnectInner(opParams, scope),
+                "disconnect"   => DisconnectInner(opParams, scope),
+                "set_setting"  => SetSettingInner(opParams, scope),
+                "set_property" => SetPropertyInner(opParams, scope),
+                _ => throw new System.NotImplementedException(
+                    $"vfx_node action '{action}' not supported in batch"),
+            };
         }
 
         // ────────────────────────── add ──────────────────────────
 
         private static object Add(JObject @params, bool verbose)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)AddInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object AddInner(JObject @params, VfxTransactionScope scope)
         {
             string path    = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
@@ -89,63 +117,65 @@ namespace SpiralingStudio.VfxMcp.Tools
             float x = @params.Value<float?>("x") ?? 0f;
             float y = @params.Value<float?>("y") ?? 0f;
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
-            string guid = AssetDatabase.AssetPathToGUID(path);
+            bool isContext = System.Array.IndexOf(VfxCatalog.Contexts, typeFqn) >= 0;
+            string token = isContext
+                ? VfxKernelContainer.NodeOps.AddContext(path, typeFqn, new Vector2(x, y))
+                : VfxKernelContainer.NodeOps.AddOperator(path, typeFqn, new Vector2(x, y));
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            scope.Record(new VfxIntentOp
             {
-                bool isContext = System.Array.IndexOf(VfxCatalog.Contexts, typeFqn) >= 0;
-                string token = isContext
-                    ? VfxKernelContainer.NodeOps.AddContext(path, typeFqn, new Vector2(x, y))
-                    : VfxKernelContainer.NodeOps.AddOperator(path, typeFqn, new Vector2(x, y));
+                OpIndex         = 0,
+                Kind            = "add",
+                ExpectedToken   = token,
+                ExpectedTypeFqn = typeFqn,
+                Payload         = new Dictionary<string, object> { ["x"] = x, ["y"] = y },
+            });
 
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex         = 0,
-                    Kind            = "add",
-                    ExpectedToken   = token,
-                    ExpectedTypeFqn = typeFqn,
-                    Payload         = new Dictionary<string, object> { ["x"] = x, ["y"] = y },
-                });
-
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["added"] = new JArray(new JObject { ["token"] = token, ["type"] = typeFqn }),
-                });
-            }
+            return new JObject
+            {
+                ["added"] = new JArray(new JObject { ["token"] = token, ["type"] = typeFqn }),
+            };
         }
 
         // ────────────────────────── remove ──────────────────────────
 
         private static object Remove(JObject @params, bool verbose)
         {
-            string path  = @params.Value<string>("graph")
+            string path = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-            string token = @params.Value<string>("token")
-                ?? throw new VfxValidationException("missing_required_param", "token is required", null);
 
             VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
 
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                VfxKernelContainer.NodeOps.RemoveNode(path, token);
-
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex       = 0,
-                    Kind          = "remove",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object> { ["token"] = token },
-                });
-
+                var payload = (JObject)RemoveInner(@params, scope);
                 var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["removed"] = new JArray(new JObject { ["token"] = token }),
-                });
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
             }
+        }
+
+        internal static object RemoveInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path  = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+            string token = @params.Value<string>("token")
+                ?? throw new VfxValidationException("missing_required_param", "token is required", null);
+
+            VfxKernelContainer.NodeOps.RemoveNode(path, token);
+
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex       = 0,
+                Kind          = "remove",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object> { ["token"] = token },
+            });
+
+            return new JObject
+            {
+                ["removed"] = new JArray(new JObject { ["token"] = token }),
+            };
         }
 
         // ────────────────────────── move ──────────────────────────
@@ -195,6 +225,22 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object Duplicate(JObject @params, bool verbose)
         {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)DuplicateInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object DuplicateInner(JObject @params, VfxTransactionScope scope)
+        {
             string path  = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
             string token = @params.Value<string>("token")
@@ -202,61 +248,71 @@ namespace SpiralingStudio.VfxMcp.Tools
             float offsetX = @params.Value<float?>("offset_x") ?? 30f;
             float offsetY = @params.Value<float?>("offset_y") ?? 30f;
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
+            var model = VfxKernelContainer.Identity.Resolve(guid, token);
+            if (model == null)
+                throw new VfxIdentityException("node_lost",
+                    $"Token {token} not found in {path}", null);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            string typeFqn  = model.GetType().FullName;
+            Vector2 newPos  = model.position + new Vector2(offsetX, offsetY);
+
+            bool isContext = model is VFXContext;
+            bool isParam   = model is VFXParameter;
+
+            string newToken;
+            if (isParam)
+                newToken = VfxKernelContainer.NodeOps.AddParameter(path, typeFqn, newPos);
+            else if (isContext)
+                newToken = VfxKernelContainer.NodeOps.AddContext(path, typeFqn, newPos);
+            else
+                newToken = VfxKernelContainer.NodeOps.AddOperator(path, typeFqn, newPos);
+
+            scope.Record(new VfxIntentOp
             {
-                var model = VfxKernelContainer.Identity.Resolve(guid, token);
-                if (model == null)
-                    throw new VfxIdentityException("node_lost",
-                        $"Token {token} not found in {path}", null);
-
-                string typeFqn  = model.GetType().FullName;
-                Vector2 newPos  = model.position + new Vector2(offsetX, offsetY);
-
-                bool isContext = model is VFXContext;
-                bool isParam   = model is VFXParameter;
-
-                string newToken;
-                if (isParam)
-                    newToken = VfxKernelContainer.NodeOps.AddParameter(path, typeFqn, newPos);
-                else if (isContext)
-                    newToken = VfxKernelContainer.NodeOps.AddContext(path, typeFqn, newPos);
-                else
-                    newToken = VfxKernelContainer.NodeOps.AddOperator(path, typeFqn, newPos);
-
-                scope.Record(new VfxIntentOp
+                OpIndex         = 0,
+                Kind            = "add",
+                ExpectedToken   = newToken,
+                ExpectedTypeFqn = typeFqn,
+                Payload         = new Dictionary<string, object>
                 {
-                    OpIndex         = 0,
-                    Kind            = "add",
-                    ExpectedToken   = newToken,
-                    ExpectedTypeFqn = typeFqn,
-                    Payload         = new Dictionary<string, object>
-                    {
-                        ["sourceToken"] = token,
-                        ["x"] = newPos.x,
-                        ["y"] = newPos.y,
-                    },
-                });
+                    ["sourceToken"] = token,
+                    ["x"] = newPos.x,
+                    ["y"] = newPos.y,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["duplicated"] = new JObject
                 {
-                    ["duplicated"] = new JObject
-                    {
-                        ["source"] = token,
-                        ["token"]  = newToken,
-                        ["type"]   = typeFqn,
-                    },
-                });
-            }
+                    ["source"] = token,
+                    ["token"]  = newToken,
+                    ["type"]   = typeFqn,
+                },
+            };
         }
 
         // ────────────────────────── connect ──────────────────────────
 
         private static object Connect(JObject @params, bool verbose)
         {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)ConnectInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object ConnectInner(JObject @params, VfxTransactionScope scope)
+        {
             string path      = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
             string fromToken = @params.Value<string>("from_token")
@@ -268,44 +324,53 @@ namespace SpiralingStudio.VfxMcp.Tools
             string toSlot    = @params.Value<string>("to_slot")
                 ?? throw new VfxValidationException("missing_required_param", "to_slot is required", null);
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
-            string guid = AssetDatabase.AssetPathToGUID(path);
+            VfxKernelContainer.NodeOps.Connect(path, fromToken, fromSlot, toToken, toSlot);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            scope.Record(new VfxIntentOp
             {
-                VfxKernelContainer.NodeOps.Connect(path, fromToken, fromSlot, toToken, toSlot);
-
-                scope.Record(new VfxIntentOp
+                OpIndex = 0,
+                Kind    = "connect",
+                Payload = new Dictionary<string, object>
                 {
-                    OpIndex = 0,
-                    Kind    = "connect",
-                    Payload = new Dictionary<string, object>
-                    {
-                        ["from_token"] = fromToken,
-                        ["from_slot"]  = fromSlot,
-                        ["to_token"]   = toToken,
-                        ["to_slot"]    = toSlot,
-                    },
-                });
+                    ["from_token"] = fromToken,
+                    ["from_slot"]  = fromSlot,
+                    ["to_token"]   = toToken,
+                    ["to_slot"]    = toSlot,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["connected"] = new JObject
                 {
-                    ["connected"] = new JObject
-                    {
-                        ["from_token"] = fromToken,
-                        ["from_slot"]  = fromSlot,
-                        ["to_token"]   = toToken,
-                        ["to_slot"]    = toSlot,
-                    },
-                });
-            }
+                    ["from_token"] = fromToken,
+                    ["from_slot"]  = fromSlot,
+                    ["to_token"]   = toToken,
+                    ["to_slot"]    = toSlot,
+                },
+            };
         }
 
         // ────────────────────────── disconnect ──────────────────────────
 
         private static object Disconnect(JObject @params, bool verbose)
         {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
+            VfxKernelContainer.BusyGate.EnsureIdle();
+            string guid = AssetDatabase.AssetPathToGUID(path);
+
+            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            {
+                var payload = (JObject)DisconnectInner(@params, scope);
+                var commit = scope.Commit();
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
+            }
+        }
+
+        internal static object DisconnectInner(JObject @params, VfxTransactionScope scope)
+        {
             string path      = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
             string fromToken = @params.Value<string>("from_token")
@@ -317,88 +382,52 @@ namespace SpiralingStudio.VfxMcp.Tools
             string toSlot    = @params.Value<string>("to_slot")
                 ?? throw new VfxValidationException("missing_required_param", "to_slot is required", null);
 
-            VfxKernelContainer.BusyGate.EnsureIdle();
-            string guid = AssetDatabase.AssetPathToGUID(path);
+            VfxKernelContainer.NodeOps.Disconnect(path, fromToken, fromSlot, toToken, toSlot);
 
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
+            scope.Record(new VfxIntentOp
             {
-                VfxKernelContainer.NodeOps.Disconnect(path, fromToken, fromSlot, toToken, toSlot);
-
-                scope.Record(new VfxIntentOp
+                OpIndex = 0,
+                Kind    = "disconnect",
+                Payload = new Dictionary<string, object>
                 {
-                    OpIndex = 0,
-                    Kind    = "disconnect",
-                    Payload = new Dictionary<string, object>
-                    {
-                        ["from_token"] = fromToken,
-                        ["from_slot"]  = fromSlot,
-                        ["to_token"]   = toToken,
-                        ["to_slot"]    = toSlot,
-                    },
-                });
+                    ["from_token"] = fromToken,
+                    ["from_slot"]  = fromSlot,
+                    ["to_token"]   = toToken,
+                    ["to_slot"]    = toSlot,
+                },
+            });
 
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
+            return new JObject
+            {
+                ["disconnected"] = new JObject
                 {
-                    ["disconnected"] = new JObject
-                    {
-                        ["from_token"] = fromToken,
-                        ["from_slot"]  = fromSlot,
-                        ["to_token"]   = toToken,
-                        ["to_slot"]    = toSlot,
-                    },
-                });
-            }
+                    ["from_token"] = fromToken,
+                    ["from_slot"]  = fromSlot,
+                    ["to_token"]   = toToken,
+                    ["to_slot"]    = toSlot,
+                },
+            };
         }
 
         // ────────────────────────── set_setting ──────────────────────────
 
         private static object SetSetting(JObject @params, bool verbose)
         {
-            string path  = @params.Value<string>("graph")
+            string path = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
-            string token = @params.Value<string>("token")
-                ?? throw new VfxValidationException("missing_required_param", "token is required", null);
-            string name  = @params.Value<string>("name")
-                ?? throw new VfxValidationException("missing_required_param", "name is required", null);
-            object value = @params["value"]?.ToObject<object>()
-                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
             VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
 
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                VfxKernelContainer.NodeOps.SetSetting(path, token, name, value);
-
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex       = 0,
-                    Kind          = "set_setting",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object>
-                    {
-                        ["name"]  = name,
-                        ["value"] = value,
-                    },
-                });
-
+                var payload = (JObject)SetSettingInner(@params, scope);
                 var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["set_setting"] = new JObject
-                    {
-                        ["token"] = token,
-                        ["name"]  = name,
-                        ["value"] = value?.ToString(),
-                    },
-                });
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
             }
         }
 
-        // ────────────────────────── set_property ──────────────────────────
-
-        private static object SetProperty(JObject @params, bool verbose)
+        internal static object SetSettingInner(JObject @params, VfxTransactionScope scope)
         {
             string path  = @params.Value<string>("graph")
                 ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
@@ -409,36 +438,83 @@ namespace SpiralingStudio.VfxMcp.Tools
             object value = @params["value"]?.ToObject<object>()
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
+            VfxKernelContainer.NodeOps.SetSetting(path, token, name, value);
+
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex       = 0,
+                Kind          = "set_setting",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
+                {
+                    ["name"]  = name,
+                    ["value"] = value,
+                },
+            });
+
+            return new JObject
+            {
+                ["set_setting"] = new JObject
+                {
+                    ["token"] = token,
+                    ["name"]  = name,
+                    ["value"] = value?.ToString(),
+                },
+            };
+        }
+
+        // ────────────────────────── set_property ──────────────────────────
+
+        private static object SetProperty(JObject @params, bool verbose)
+        {
+            string path = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+
             VfxKernelContainer.BusyGate.EnsureIdle();
             string guid = AssetDatabase.AssetPathToGUID(path);
 
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
             {
-                VfxKernelContainer.NodeOps.SetProperty(path, token, name, value);
-
-                scope.Record(new VfxIntentOp
-                {
-                    OpIndex       = 0,
-                    Kind          = "set_property",
-                    ExpectedToken = token,
-                    Payload       = new Dictionary<string, object>
-                    {
-                        ["name"]  = name,
-                        ["value"] = value,
-                    },
-                });
-
+                var payload = (JObject)SetPropertyInner(@params, scope);
                 var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, new JObject
-                {
-                    ["set_property"] = new JObject
-                    {
-                        ["token"] = token,
-                        ["name"]  = name,
-                        ["value"] = value?.ToString(),
-                    },
-                });
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
             }
+        }
+
+        internal static object SetPropertyInner(JObject @params, VfxTransactionScope scope)
+        {
+            string path  = @params.Value<string>("graph")
+                ?? throw new VfxValidationException("missing_required_param", "graph is required", null);
+            string token = @params.Value<string>("token")
+                ?? throw new VfxValidationException("missing_required_param", "token is required", null);
+            string name  = @params.Value<string>("name")
+                ?? throw new VfxValidationException("missing_required_param", "name is required", null);
+            object value = @params["value"]?.ToObject<object>()
+                ?? throw new VfxValidationException("missing_required_param", "value is required", null);
+
+            VfxKernelContainer.NodeOps.SetProperty(path, token, name, value);
+
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex       = 0,
+                Kind          = "set_property",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
+                {
+                    ["name"]  = name,
+                    ["value"] = value,
+                },
+            });
+
+            return new JObject
+            {
+                ["set_property"] = new JObject
+                {
+                    ["token"] = token,
+                    ["name"]  = name,
+                    ["value"] = value?.ToString(),
+                },
+            };
         }
 
         // ────────────────────────── get_setting (read-only) ──────────────────────────
