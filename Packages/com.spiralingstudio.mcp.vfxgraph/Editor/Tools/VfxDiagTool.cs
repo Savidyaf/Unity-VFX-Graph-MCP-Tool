@@ -100,31 +100,29 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object ListAttributes(JObject @params, bool verbose)
         {
-            // VfxCatalog.g.cs does not declare an Attributes array.
-            // TODO Phase 5: populate catalog with VFX attribute type names.
-            int page = @params?.Value<int?>("page") ?? 0;
+            // F10 (v0.3.1): honest not_implemented stub. The VFX attribute
+            // catalog (VFXAttributesManager built-ins + per-graph custom
+            // attributes) requires either an internal-API walker or a soft-fork
+            // bridge helper — deferred to v0.3.2 per spec §4.1 Path A4-stub.
             return VfxKernelContainer.Shaper.ShapeRead(new JObject
             {
+                ["state"]      = "not_implemented",
+                ["hint"]       = "Built-in attribute enumeration deferred to v0.3.2 — see Phase 4a F10.",
                 ["attributes"] = new JArray(),
-                ["page"]       = page,
-                ["total"]      = 0,
-                ["has_next"]   = false,
-                ["note"]       = "Attributes catalog not yet generated. TODO Phase 5.",
             }, verbose);
         }
 
         private static object ListSettings(JObject @params, bool verbose)
         {
-            // VfxCatalog.g.cs does not declare a Settings array.
-            // TODO Phase 5: populate catalog with graph/node setting names.
-            int page = @params?.Value<int?>("page") ?? 0;
+            // F10 (v0.3.1): honest not_implemented stub. Per-type setting
+            // enumeration (walking [VFXSetting]-attributed fields across every
+            // VFXModel subclass) requires walker + emitter changes deferred to
+            // v0.3.2 per spec §4.1 Path A4-stub.
             return VfxKernelContainer.Shaper.ShapeRead(new JObject
             {
+                ["state"]    = "not_implemented",
+                ["hint"]     = "Per-type setting enumeration deferred to v0.3.2 — see Phase 4a F10.",
                 ["settings"] = new JArray(),
-                ["page"]     = page,
-                ["total"]    = 0,
-                ["has_next"] = false,
-                ["note"]     = "Settings catalog not yet generated. TODO Phase 5.",
             }, verbose);
         }
 
