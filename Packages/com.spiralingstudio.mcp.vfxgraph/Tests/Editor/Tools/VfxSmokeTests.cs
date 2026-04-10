@@ -22,7 +22,7 @@
 //   15. vfx_diag.list_block_types
 //   16. vfx_diag.list_contexts
 //   17. vfx_diag.read_console
-//   18. vfx_recipe.list   → empty array + v0.3.1 note
+//   18. vfx_recipe.list   → 4-entry catalog (W3-D lift, v0.3.1)
 //   19. vfx_asset.delete  → cleanup the fixtures
 //
 // Coverage matrix (release-gate criterion #5 — three-part health gate clean):
@@ -243,14 +243,16 @@ namespace SpiralingStudio.VfxMcp.Tools.Tests
                 "read_console must include 'lines' key (even if empty)");
 
             // ── 18. vfx_recipe.list ────────────────────────────────────────
+            // W3-D LIFT (v0.3.1): recipes list is now populated with the
+            // canonical catalog (ecs_buffer_particles, simple_spawn_particles,
+            // gpu_event_chain, particle_strip_trail). Recipe EXECUTION remains
+            // deferred to v0.3.2, so the stale 'note' key is gone.
             var recipeResult = (JObject)VfxRecipeTool.HandleCommand(JObject.FromObject(new {
                 action = "list",
             }));
             AssertNoError(recipeResult, "vfx_recipe.list");
             Assert.IsNotNull(recipeResult["recipes"],
-                "vfx_recipe.list must include 'recipes' (empty in v0.3.0)");
-            Assert.IsNotNull(recipeResult["note"],
-                "vfx_recipe.list must include the 'note' about v0.3.1 deferral");
+                "vfx_recipe.list must include 'recipes' array");
 
             // ── 19. vfx_asset.delete (cleanup is also tested via teardown) ──
             var deleteResult = (JObject)VfxAssetTool.HandleCommand(JObject.FromObject(new {

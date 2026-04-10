@@ -190,9 +190,10 @@ namespace SpiralingStudio.VfxMcp.Tools
             object value = @params["value"]?.ToObject<object>()
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
-            // NodeOps.SetProperty walks inputSlots then outputSlots by name "value".
-            // VFXParameter has an output slot whose property.name is the type name.
-            // We pass "value" and let GetProperty fall through to output slots.
+            // VFXParameter's user-facing value lives on outputSlots[0] (property
+            // name "o"). NodeOps.SetProperty special-cases VFXParameter so that
+            // passing "value" here routes to VFXParameter.value and coerces the
+            // incoming JSON token to the parameter's declared runtime type.
             VfxKernelContainer.NodeOps.SetProperty(path, token, "value", value);
 
             scope.Record(new VfxIntentOp

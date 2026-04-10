@@ -180,18 +180,19 @@ namespace SpiralingStudio.VfxMcp.Tools
 
             return new JObject
             {
-                ["added"] = new JObject { ["token"] = token, ["subgraph"] = subgraph },
+                ["added"] = new JArray(new JObject { ["token"] = token, ["subgraph"] = subgraph }),
             };
         }
 
         private static object GetExposed(JObject @params, bool verbose)
         {
             // Read-only — skip BusyGate and transaction.
-            // Phase 5: enumerate VFXSubgraphOperator/Block/Context exposed inputs.
+            // Canonical not_implemented envelope (matches vfx_diag.list_attributes/list_settings).
             var payload = new JObject
             {
+                ["state"]   = "not_implemented",
+                ["hint"]    = "Subgraph exposed-input enumeration is deferred — use vfx_node.get_property on individual subgraph references after they are added to a graph.",
                 ["exposed"] = new JArray(),
-                ["note"]    = "Phase 5: enumerate VFXSubgraphOperator/Block/Context exposed inputs",
             };
             return VfxKernelContainer.Shaper.ShapeRead(payload, verbose);
         }

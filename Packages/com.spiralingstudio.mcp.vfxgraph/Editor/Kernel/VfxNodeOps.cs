@@ -29,6 +29,22 @@ namespace SpiralingStudio.VfxMcp.Kernel
 {
     internal sealed class VfxNodeOps : IVfxNodeOps
     {
+        // ─────────────────────── W4-A type-not-found helper ─────────────────
+        // Converts unknown-type FQNs to error.code="type_not_found" with a
+        // structured details payload, so vfx_node.add callers can distinguish
+        // contract errors from genuinely unexpected internal failures.
+        private static void ThrowTypeNotFound(string typeFqn, string category)
+        {
+            throw new VfxValidationException(
+                "type_not_found",
+                $"Type '{typeFqn}' not found in VFX catalog.",
+                new Dictionary<string, object>
+                {
+                    ["type_fqn"] = typeFqn ?? string.Empty,
+                    ["category"] = category,
+                });
+        }
+
         // ─────────────────────────── AddOperator ───────────────────────────
 
         public string AddOperator(string graphAssetPath, string typeFqn, Vector2 pos)
@@ -44,7 +60,13 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 throw new VfxValidationException("graph_load_failed",
                     $"Could not load VFXGraph from {graphAssetPath}", null);
 
-            var op = VfxNodeWrappers.CreateOperator(typeFqn);
+            // W4-A: catalog precheck + narrow try/catch around type resolution so that
+            // unknown FQNs surface as error.code="type_not_found" instead of "vfx_exception".
+            if (System.Array.IndexOf(VfxCatalog.Operators, typeFqn) < 0)
+                ThrowTypeNotFound(typeFqn, "operator");
+            VFXOperator op;
+            try { op = VfxNodeWrappers.CreateOperator(typeFqn); }
+            catch (System.ArgumentException) { ThrowTypeNotFound(typeFqn, "operator"); return null; }
             graph.AddChild(op);
             op.position = pos;
 
@@ -67,7 +89,12 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 throw new VfxValidationException("graph_load_failed",
                     $"Could not load VFXGraph from {graphAssetPath}", null);
 
-            var ctx = VfxNodeWrappers.CreateContext(typeFqn);
+            // W4-A: catalog precheck + narrow try/catch.
+            if (System.Array.IndexOf(VfxCatalog.Contexts, typeFqn) < 0)
+                ThrowTypeNotFound(typeFqn, "context");
+            VFXContext ctx;
+            try { ctx = VfxNodeWrappers.CreateContext(typeFqn); }
+            catch (System.ArgumentException) { ThrowTypeNotFound(typeFqn, "context"); return null; }
             graph.AddChild(ctx);
             ctx.position = pos;
 
@@ -97,7 +124,12 @@ namespace SpiralingStudio.VfxMcp.Kernel
                     $"Token {parentContextToken} does not resolve to a VFXContext " +
                     $"(got {parentModel.GetType().Name})", null);
 
-            var block = VfxNodeWrappers.CreateBlock(typeFqn);
+            // W4-A: catalog precheck + narrow try/catch.
+            if (System.Array.IndexOf(VfxCatalog.Blocks, typeFqn) < 0)
+                ThrowTypeNotFound(typeFqn, "block");
+            VFXBlock block;
+            try { block = VfxNodeWrappers.CreateBlock(typeFqn); }
+            catch (System.ArgumentException) { ThrowTypeNotFound(typeFqn, "block"); return null; }
             // VFXModel.AddChild(model, index=-1, notify=true)
             context.AddChild(block, index);
 
@@ -122,8 +154,13 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 throw new VfxValidationException("graph_load_failed",
                     $"Could not load VFXGraph from {graphAssetPath}", null);
 
+            // W4-A: catalog precheck + narrow try/catch.
+            if (System.Array.IndexOf(VfxCatalog.Parameters, typeFqn) < 0)
+                ThrowTypeNotFound(typeFqn, "parameter");
             // replicates VFXViewController.cs:1223 — AddVFXParameter bookkeeping
-            var param = VfxNodeWrappers.CreateParameter(typeFqn);
+            VFXParameter param;
+            try { param = VfxNodeWrappers.CreateParameter(typeFqn); }
+            catch (System.ArgumentException) { ThrowTypeNotFound(typeFqn, "parameter"); return null; }
             graph.AddChild(param);
             param.position = pos;
 
@@ -199,7 +236,13 @@ namespace SpiralingStudio.VfxMcp.Kernel
             }
 
             // BindAsset validates the asset class matches the model type and assigns m_Subgraph.
-            VfxSubgraphWrappers.BindAsset(refModel, subgraphAssetPath);
+            // W4-A: translate a missing-subgraph FileNotFoundException to type_not_found so
+            // callers can distinguish contract errors from genuinely unexpected failures.
+            try { VfxSubgraphWrappers.BindAsset(refModel, subgraphAssetPath); }
+            catch (System.IO.FileNotFoundException)
+            {
+                ThrowTypeNotFound(subgraphAssetPath, "subgraph_ref");
+            }
             graph.AddChild(refModel);
             refModel.position = pos;
 
@@ -243,6 +286,29 @@ namespace SpiralingStudio.VfxMcp.Kernel
             if (toModel == null)
                 throw new VfxIdentityException("node_lost",
                     $"Token {toToken} not found in {graphAssetPath}", null);
+
+            // W2-A: context-to-context flow link (Spawn→Init→Update→Output) uses
+            // VFXContext.LinkTo(other, fromIndex, toIndex) — the data-slot path
+            // below cannot find named slots for these flow ports.
+            var fromCtx = fromModel as VFXContext;
+            var toCtx   = toModel   as VFXContext;
+            if (fromCtx != null && toCtx != null)
+            {
+                int fromIndex = ParseFlowSlotIndex(fromSlotName, fromToken, output: true);
+                int toIndex   = ParseFlowSlotIndex(toSlotName,   toToken,   output: false);
+                try { fromCtx.LinkTo(toCtx, fromIndex, toIndex); }
+                catch (System.ArgumentException ex)
+                {
+                    throw new VfxValidationException("link_failed",
+                        $"VFXContext.LinkTo refused link {fromCtx.GetType().Name}[{fromIndex}] → " +
+                        $"{toCtx.GetType().Name}[{toIndex}]: {ex.Message}", null);
+                }
+                return;
+            }
+            if (fromCtx != null || toCtx != null)
+                throw new VfxValidationException("invalid_node",
+                    "Mixed flow/data link not allowed: both endpoints must be VFXContext " +
+                    "for a context flow link, or neither.", null);
 
             var fromContainer = fromModel as IVFXSlotContainer;
             var toContainer   = toModel   as IVFXSlotContainer;
@@ -290,6 +356,21 @@ namespace SpiralingStudio.VfxMcp.Kernel
             if (toModel == null)
                 throw new VfxIdentityException("node_lost",
                     $"Token {toToken} not found in {graphAssetPath}", null);
+
+            // W2-A: symmetric context-to-context flow unlink path.
+            var fromCtx = fromModel as VFXContext;
+            var toCtx   = toModel   as VFXContext;
+            if (fromCtx != null && toCtx != null)
+            {
+                int fromIndex = ParseFlowSlotIndex(fromSlotName, fromToken, output: true);
+                int toIndex   = ParseFlowSlotIndex(toSlotName,   toToken,   output: false);
+                fromCtx.UnlinkTo(toCtx, fromIndex, toIndex);
+                return;
+            }
+            if (fromCtx != null || toCtx != null)
+                throw new VfxValidationException("invalid_node",
+                    "Mixed flow/data unlink not allowed: both endpoints must be VFXContext " +
+                    "for a context flow link, or neither.", null);
 
             var fromContainer = fromModel as IVFXSlotContainer;
             var toContainer   = toModel   as IVFXSlotContainer;
@@ -454,13 +535,33 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 throw new VfxValidationException("invalid_node",
                     $"Token {token} ({model.GetType().Name}) is not an IVFXSlotContainer", null);
 
+            // VFXParameter special-case: its user-facing "value" lives on outputSlots[0]
+            // (property name "o"), and VFXParameter.value setter writes there directly.
+            // Route name=="value" (or the canonical "o") to the parameter's own setter
+            // and coerce the incoming JSON to the parameter's declared type.
+            if (model is VFXParameter parameter && (name == "value" || name == "o"))
+            {
+                var coerced = VfxCoercerDispatch.Coerce(value, parameter.type);
+                parameter.value = coerced;
+                return;
+            }
+
             var slot = FindSlotByName(container, name, input: true);
             if (slot == null)
                 throw new VfxValidationException("slot_not_found",
                     $"{model.GetType().Name} ({token}) has no input slot '{name}'", null);
 
+            // W5-A fix — route the raw value through VfxCoercerDispatch before writing
+            // it to the slot. The slot's declared type comes from VFXSlot.property.type
+            // (VFXProperty.type — verified VFXSlot.cs:20, VFXProperty.cs:25). Without
+            // this coercion JObject / JArray payloads (e.g. {"x":1,"y":2,"z":3} from
+            // vfx_block.set_attribute) are forwarded straight to VFXSerializedObject.Set
+            // and throw "Cannot assign an object of type Newtonsoft.Json.Linq.JObject
+            // to VFXSerializedObject of type UnityEngine.Vector3".
+            System.Type slotType = slot.property.type;
+            object coercedSlotValue = VfxCoercerDispatch.Coerce(value, slotType);
             // VFXSlot.value setter — verified VFXSlot.cs:62+
-            slot.value = value;
+            slot.value = coercedSlotValue;
         }
 
         // ─────────────────────────── GetProperty ───────────────────────────
@@ -477,6 +578,13 @@ namespace SpiralingStudio.VfxMcp.Kernel
             if (container == null)
                 throw new VfxValidationException("invalid_node",
                     $"Token {token} ({model.GetType().Name}) is not an IVFXSlotContainer", null);
+
+            // VFXParameter special-case: the canonical "value" lives on outputSlots[0]
+            // (property name "o") and is exposed via VFXParameter.value directly.
+            if (model is VFXParameter parameter && (name == "value" || name == "o"))
+            {
+                return parameter.value;
+            }
 
             // Try input slots first, then output slots (e.g. VFXParameter has output)
             var slot = FindSlotByName(container, name, input: true)
@@ -590,6 +698,22 @@ namespace SpiralingStudio.VfxMcp.Kernel
         }
 
         // ─────────────────────────── Private helpers ───────────────────────
+
+        /// <summary>
+        /// W2-A: Parse a context-flow slot label into a numeric index for VFXContext.LinkTo.
+        /// Accepts null/empty/"flow"/"o"/"i" as the default index 0; otherwise expects an int.
+        /// </summary>
+        private static int ParseFlowSlotIndex(string slotName, string token, bool output)
+        {
+            if (string.IsNullOrEmpty(slotName)) return 0;
+            string s = slotName.Trim();
+            if (s.Length == 0) return 0;
+            if (s == "flow" || s == "o" || s == "i" || s == "out" || s == "in") return 0;
+            if (int.TryParse(s, out int idx) && idx >= 0) return idx;
+            throw new VfxValidationException("slot_not_found",
+                $"Context flow {(output ? "output" : "input")} slot '{slotName}' on token {token} " +
+                $"must be empty, 'flow', '{(output ? "o" : "i")}', or a non-negative integer index.", null);
+        }
 
         /// <summary>
         /// Find a slot by its property name on an IVFXSlotContainer.

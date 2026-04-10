@@ -218,8 +218,22 @@ namespace SpiralingStudio.VfxMcp.Tools
 
             // Remove then re-insert at the new index.
             // VFXModel.RemoveChild + AddChild — both verified in VFXModel.cs:165,145
+            // C1 safety fix: capture the original index first so we can restore
+            // the block if AddChild throws (e.g. out-of-bounds new_index). Without
+            // this guard a failed reorder leaves the block detached and lost.
+            int originalIndex = parent.GetIndex(block);
             parent.RemoveChild(block, notify: false);
-            parent.AddChild(block, newIndex, notify: true);
+            try
+            {
+                parent.AddChild(block, newIndex, notify: true);
+            }
+            catch
+            {
+                // Restore the block at its original position and re-throw so the
+                // caller still sees the validation error from the kernel.
+                parent.AddChild(block, originalIndex, notify: true);
+                throw;
+            }
 
             scope.Record(new VfxIntentOp
             {
@@ -340,18 +354,38 @@ namespace SpiralingStudio.VfxMcp.Tools
             object value          = @params["value"]?.ToObject<object>()
                 ?? throw new VfxValidationException("missing_required_param", "value is required", null);
 
-            // Delegate to NodeOps.SetProperty — operates on input slots by name.
-            VfxKernelContainer.NodeOps.SetProperty(path, token, attributeName, value);
+            // W2-B fix: SetAttribute blocks expose the attribute name as a [VFXSetting]
+            // field called "attribute" (UnityEditor.VFX.Block.SetAttribute.attribute).
+            // The value lives on an input slot whose name is derived from the attribute
+            // name via "_" + capitalised first char + remainder (e.g. "velocity" → "_Velocity").
+            // See SetAttribute.cs::GenerateLocalAttributeName + inputProperties.
+            // Step 1: persist the setting so the block re-syncs its slots for the chosen attribute.
+            VfxKernelContainer.NodeOps.SetSetting(path, token, "attribute", attributeName);
+
+            // Step 2: write the value into the local-name slot. Mirrors GenerateLocalAttributeName.
+            string slotName = "_" + char.ToUpperInvariant(attributeName[0]) + attributeName.Substring(1);
+            VfxKernelContainer.NodeOps.SetProperty(path, token, slotName, value);
 
             scope.Record(new VfxIntentOp
             {
                 OpIndex       = 0,
+                Kind          = "set_setting",
+                ExpectedToken = token,
+                Payload       = new Dictionary<string, object>
+                {
+                    ["name"]  = "attribute",
+                    ["value"] = attributeName,
+                },
+            });
+            scope.Record(new VfxIntentOp
+            {
+                OpIndex       = 1,
                 Kind          = "set_property",
                 ExpectedToken = token,
                 Payload       = new Dictionary<string, object>
                 {
-                    ["attribute_name"] = attributeName,
-                    ["value"]          = value,
+                    ["name"]  = slotName,
+                    ["value"] = value,
                 },
             });
 
@@ -361,6 +395,7 @@ namespace SpiralingStudio.VfxMcp.Tools
                 {
                     ["token"]          = token,
                     ["attribute_name"] = attributeName,
+                    ["slot_name"]      = slotName,
                     ["value"]          = value?.ToString(),
                 },
             };
@@ -371,10 +406,13 @@ namespace SpiralingStudio.VfxMcp.Tools
         private static object ListAttributes(JObject @params, bool verbose)
         {
             // Phase 5 deferred — rich attribute listing belongs to the diagnostics lane.
+            // W2-B fix: return the canonical {state, hint} stub envelope rather than the
+            // ad-hoc {note} shape, which downstream consumers cannot reliably classify.
             return VfxKernelContainer.Shaper.ShapeRead(
-                new Newtonsoft.Json.Linq.JObject
+                new JObject
                 {
-                    ["note"] = "Phase 5: use vfx_diag.list_attributes",
+                    ["state"] = "not_implemented",
+                    ["hint"]  = "Use vfx_diag.list_attributes for the catalog of built-in and per-graph attributes.",
                 },
                 verbose);
         }

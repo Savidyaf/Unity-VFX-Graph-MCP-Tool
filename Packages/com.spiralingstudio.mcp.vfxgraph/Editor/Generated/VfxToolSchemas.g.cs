@@ -11,7 +11,7 @@ namespace SpiralingStudio.VfxMcp.Generated
     /// </summary>
     internal static class VfxToolSchemas
     {
-        // vfx_node.add — 242 types
+        // vfx_node.add — 249 types
         public static readonly string VfxNode_AddTypeEnum = string.Join("\n", new string[]
         {
             "UnityEditor.VFX.Operator.AABoxVolume",
@@ -255,6 +255,13 @@ namespace SpiralingStudio.VfxMcp.Generated
             "UnityEditor.VFX.VFXInlineOperator",
             "UnityEditor.VFX.VFXInlineOperator",
             "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
+            "UnityEditor.VFX.VFXInlineOperator",
             "UnityEditor.VFX.VFXOperatorPointCache",
         });
 
@@ -420,9 +427,16 @@ namespace SpiralingStudio.VfxMcp.Generated
             "UnityEditor.VFX.VFXStaticMeshOutput",
         });
 
-        // vfx_node.add_parameter — 49 types
+        // vfx_node.add_parameter — 56 types
         public static readonly string VfxParameter_AddTypeEnum = string.Join("\n", new string[]
         {
+            "CombatSim.Ballistics.VFX.VFXExplosionRequest",
+            "CombatSim.Ballistics.VFX.VFXImpactRequest",
+            "CombatSim.Ballistics.VFX.VFXMuzzleFlashRequest",
+            "CombatSim.Ballistics.VFX.VFXRicochetRequest",
+            "CombatSim.Ballistics.VFX.VFXSpawnToDataRequest",
+            "CombatSim.Ballistics.VFX.VFXThrusterData",
+            "CombatSim.Ballistics.VFX.VFXTrailData",
             "System.Boolean",
             "System.Int32",
             "System.Single",

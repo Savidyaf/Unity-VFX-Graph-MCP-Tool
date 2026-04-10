@@ -9,6 +9,7 @@
 // Catalog source: VfxCatalog.g.cs (auto-generated, do not reflect on VFX types).
 // Page size: 50 items per page by default.
 
+using System.Linq;
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
 using SpiralingStudio.VfxMcp.Generated;
@@ -102,30 +103,23 @@ namespace SpiralingStudio.VfxMcp.Tools
 
         private static object ListAttributes(JObject @params, bool verbose)
         {
-            // F10 (v0.3.1): honest not_implemented stub. The VFX attribute
-            // catalog (VFXAttributesManager built-ins + per-graph custom
-            // attributes) requires either an internal-API walker or a soft-fork
-            // bridge helper — deferred to v0.3.2 per spec §4.1 Path A4-stub.
-            return VfxKernelContainer.Shaper.ShapeRead(new JObject
-            {
-                ["state"]      = "not_implemented",
-                ["hint"]       = "Built-in attribute enumeration deferred to v0.3.2 — see Phase 4a F10.",
-                ["attributes"] = new JArray(),
-            }, verbose);
+            // F10 catalog lift (v0.3.2 Cluster W3-C): built-in VFX attribute
+            // names are emitted into VfxCatalog.Attributes by CatalogEmitter,
+            // sourced from VFXAttributesManager (InternalsVisibleTo grant).
+            int page = @params?.Value<int?>("page") ?? 0;
+            return VfxKernelContainer.Shaper.ShapeRead(
+                Page(VfxCatalog.Attributes, page, DefaultPageSize, "attributes"), verbose);
         }
 
         private static object ListSettings(JObject @params, bool verbose)
         {
-            // F10 (v0.3.1): honest not_implemented stub. Per-type setting
-            // enumeration (walking [VFXSetting]-attributed fields across every
-            // VFXModel subclass) requires walker + emitter changes deferred to
-            // v0.3.2 per spec §4.1 Path A4-stub.
-            return VfxKernelContainer.Shaper.ShapeRead(new JObject
-            {
-                ["state"]    = "not_implemented",
-                ["hint"]     = "Per-type setting enumeration deferred to v0.3.2 — see Phase 4a F10.",
-                ["settings"] = new JArray(),
-            }, verbose);
+            // F10 catalog lift (v0.3.2 Cluster W3-C): per-type [VFXSetting]
+            // field map emitted into VfxCatalog.Settings at regen time.
+            // Paginated as an array of { type_fqn, settings[] } entries so
+            // the response shape matches the other list_* actions.
+            int page = @params?.Value<int?>("page") ?? 0;
+            return VfxKernelContainer.Shaper.ShapeRead(
+                PageSettings(VfxCatalog.Settings, page, DefaultPageSize), verbose);
         }
 
         private static object ListSubgraphs(JObject @params, bool verbose)
@@ -190,6 +184,39 @@ namespace SpiralingStudio.VfxMcp.Tools
                 ["page"]     = page,
                 ["total"]    = items?.Length ?? 0,
                 ["has_next"] = end < (items?.Length ?? 0),
+            };
+        }
+
+        // F10 catalog lift: pages a dictionary of type_fqn -> settings[]
+        // into the same {key, page, total, has_next} envelope as Page, with
+        // each entry rendered as {type_fqn, settings[]}.
+        private static JObject PageSettings(
+            System.Collections.Generic.Dictionary<string, string[]> map, int page, int size)
+        {
+            var entries = (map ?? new System.Collections.Generic.Dictionary<string, string[]>())
+                .OrderBy(kv => kv.Key, System.StringComparer.Ordinal)
+                .ToArray();
+            int total = entries.Length;
+            int start = System.Math.Max(0, page * size);
+            int end   = System.Math.Min(start + size, total);
+            var arr   = new JArray();
+            for (int i = start; i < end; i++)
+            {
+                var kv = entries[i];
+                var settingArr = new JArray();
+                foreach (var name in kv.Value) settingArr.Add(name);
+                arr.Add(new JObject
+                {
+                    ["type_fqn"] = kv.Key,
+                    ["settings"] = settingArr,
+                });
+            }
+            return new JObject
+            {
+                ["settings"] = arr,
+                ["page"]     = page,
+                ["total"]    = total,
+                ["has_next"] = end < total,
             };
         }
     }

@@ -144,26 +144,19 @@ namespace SpiralingStudio.VfxMcp.Tools
             return new JObject { ["assets"] = arr };
         }
 
+        // W3-B (was C6): vfx_asset.delete bypasses VfxTransaction, matching the
+        // Create pattern. The transaction's Commit() runs a three-part health gate
+        // (YAML diff + compile gate + console correlation) that re-loads and
+        // re-compiles the asset — but after AssetDatabase.DeleteAsset the asset is
+        // gone, so the compile gate threw and the caller saw a spurious
+        // "compile_error" envelope even though the delete itself succeeded. Asset
+        // deletion is not a graph mutation; we skip the transaction entirely.
         private static object Delete(JObject @params, bool verbose)
         {
             string path = @params.Value<string>("path")
                 ?? throw new VfxValidationException("missing_required_param", "path is required", null);
 
             VfxKernelContainer.BusyGate.EnsureIdle();
-
-            string guid = AssetDatabase.AssetPathToGUID(path);
-            using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.SingleCall))
-            {
-                DeleteInner(@params, scope);
-                var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.Shape(commit, verbose);
-            }
-        }
-
-        internal static object DeleteInner(JObject @params, VfxTransactionScope scope)
-        {
-            string path = @params.Value<string>("path")
-                ?? throw new VfxValidationException("missing_required_param", "path is required", null);
 
             bool deleted = AssetDatabase.DeleteAsset(path);
             if (!deleted)
@@ -185,10 +178,7 @@ namespace SpiralingStudio.VfxMcp.Tools
             {
                 var payload = (JObject)AssignInner(@params, scope);
                 var commit = scope.Commit();
-                if (!commit.Ok)
-                    return VfxKernelContainer.Shaper.Shape(commit, verbose);
-
-                return payload;
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, payload);
             }
         }
 

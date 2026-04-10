@@ -38,6 +38,28 @@ namespace SpiralingStudio.VfxMcp.Generation
             EmitArray(sb, "SubgraphBlocks", ir.SubgraphBlocks.Select(o => o.TypeFQN));
             EmitArray(sb, "SubgraphContexts", ir.SubgraphContexts.Select(o => o.TypeFQN));
 
+            // F10 catalog lift (Cluster W3-C): built-in VFX attribute names,
+            // sourced from VFXAttributesManager via VfxLibraryWalker.WalkAttributes.
+            EmitArray(sb, "Attributes", VfxLibraryWalker.WalkAttributes());
+
+            // F10 catalog lift: per-type [VFXSetting] field map. Field-attribute
+            // reflection is build-time and does not cross the no-runtime-reflection
+            // boundary. Keys are fully-qualified model type names; values are the
+            // raw C# field names (e.g. "m_Type", "m_HLSLCode"). Types with zero
+            // [VFXSetting] fields are omitted. Sorted deterministically.
+            var settings = VfxLibraryWalker.WalkSettings(ir);
+            sb.AppendLine("        public static readonly System.Collections.Generic.Dictionary<string, string[]> Settings = new System.Collections.Generic.Dictionary<string, string[]>(System.StringComparer.Ordinal)");
+            sb.AppendLine("        {");
+            foreach (var kv in settings.OrderBy(k => k.Key, System.StringComparer.Ordinal))
+            {
+                var names = string.Join(", ", kv.Value
+                    .OrderBy(n => n, System.StringComparer.Ordinal)
+                    .Select(n => $"\"{n}\""));
+                sb.AppendLine($"            {{ \"{kv.Key}\", new string[] {{ {names} }} }},");
+            }
+            sb.AppendLine("        };");
+            sb.AppendLine();
+
             // ERRATUM P-M1: deduplicate short names to avoid dictionary
             // ArgumentException at runtime on collision. Collisions are
             // recorded into a separate Collisions table for the override

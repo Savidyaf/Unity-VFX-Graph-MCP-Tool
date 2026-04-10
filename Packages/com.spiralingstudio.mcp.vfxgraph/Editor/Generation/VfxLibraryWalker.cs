@@ -6,8 +6,13 @@
 // transient template instance, applying erratum P-B2 (unwrap SerializableType
 // via the implicit Type operator) and erratum P-H2 (preserve the raw m_*
 // field name in SettingDescriptor.Name).
+// v0.3.2 F10 catalog lift (Cluster W3-C): adds WalkAttributes() +
+// WalkSettings() surfaces so CatalogEmitter can emit Attributes[] and the
+// Settings dict. Field-attribute reflection is a build-time activity, not
+// runtime dispatch, so it does NOT violate the no-runtime-reflection rule.
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEditor.VFX;
 using UnityEngine;
 
@@ -84,6 +89,88 @@ namespace SpiralingStudio.VfxMcp.Generation
                 }
 
             return (ir, templates);
+        }
+
+        /// <summary>
+        /// F10 catalog lift: returns the canonical list of VFX built-in
+        /// attribute names sourced from VFXAttributesManager (reachable via
+        /// the InternalsVisibleTo grant in the Unity VFX package). Called at
+        /// catalog-regen time; caller is the emitter, not runtime dispatch.
+        ///
+        /// The "all-true" combination is intentional: we want every variadic
+        /// wrapper, every component, every read-only and every write-only
+        /// built-in on the surface so LLM callers can inspect the full set
+        /// (filtering is a caller-side concern).
+        /// </summary>
+        public static string[] WalkAttributes()
+        {
+            try
+            {
+                return VFXAttributesManager
+                    .GetBuiltInNamesOrCombination(true, true, true, true)
+                    .Distinct(System.StringComparer.Ordinal)
+                    .OrderBy(n => n, System.StringComparer.Ordinal)
+                    .ToArray();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning(
+                    $"[VFX MCP] VfxLibraryWalker.WalkAttributes fell back to hardcoded list: {ex.Message}");
+                // Hardcoded canonical Unity 6000.4 / VFX Graph 17 fallback —
+                // matches the s_BuiltInAttributes list in VFXAttributesManager.
+                var fallback = new[]
+                {
+                    "age", "alive", "alpha", "angleX", "angleY", "angleZ",
+                    "angularVelocityX", "angularVelocityY", "angularVelocityZ",
+                    "axisX", "axisY", "axisZ",
+                    "color", "direction", "eventCount", "lifetime", "mass",
+                    "oldPosition", "particleId", "pivotX", "pivotY", "pivotZ",
+                    "position", "scaleX", "scaleY", "scaleZ",
+                    "seed", "size", "spawnCount", "spawnTime",
+                    "targetPosition", "texIndex", "velocity",
+                };
+                System.Array.Sort(fallback, System.StringComparer.Ordinal);
+                return fallback;
+            }
+        }
+
+        /// <summary>
+        /// F10 catalog lift: walks every VFX model type already surfaced by
+        /// the catalog (operators + contexts + blocks + parameters) and
+        /// reflects their [VFXSetting]-attributed fields. Returns an FQN ->
+        /// settings[] map sorted deterministically. Types with zero settings
+        /// are omitted. Field-attribute reflection is build-time — no runtime
+        /// dispatch involved.
+        /// </summary>
+        public static Dictionary<string, string[]> WalkSettings(CatalogIR ir)
+        {
+            var result = new Dictionary<string, string[]>(System.StringComparer.Ordinal);
+            if (ir == null) return result;
+
+            IEnumerable<NodeDescriptor> allNodes = ir.Operators
+                .Concat(ir.Contexts)
+                .Concat(ir.Blocks)
+                .Concat(ir.Parameters);
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach (var node in allNodes)
+            {
+                var t = node.ModelType;
+                if (t == null) continue;
+                if (result.ContainsKey(node.TypeFQN)) continue;
+
+                var fields = t.GetFields(flags)
+                    .Where(f => f.GetCustomAttributes(typeof(VFXSettingAttribute), true).Any())
+                    .Select(f => f.Name)
+                    .Distinct(System.StringComparer.Ordinal)
+                    .OrderBy(n => n, System.StringComparer.Ordinal)
+                    .ToArray();
+
+                if (fields.Length > 0)
+                    result[node.TypeFQN] = fields;
+            }
+
+            return result;
         }
 
         /// <summary>

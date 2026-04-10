@@ -102,6 +102,13 @@ namespace SpiralingStudio.VfxMcp.Tools
 
             using (var scope = VfxKernelContainer.Transaction.Begin(guid, path, VfxTransactionScopeKind.Batch))
             {
+                // Collect each op's returned payload so the batch response surfaces
+                // the per-op results to the caller. Without this fold, only
+                // commit.Diffs / Warnings / Health flow through Shape() and the
+                // documented `added[]` (per references/action-catalog.md) would be
+                // missing for batch commits even though the ops persisted correctly.
+                var combinedPayload = new JObject();
+
                 int opIndex = 0;
                 foreach (JObject op in ops)
                 {
@@ -125,12 +132,41 @@ namespace SpiralingStudio.VfxMcp.Tools
                             $"{toolType.Name}.ApplyInTransaction not found — " +
                             "tool class is not batch-compatible", null);
 
-                    method.Invoke(null, new object[] { op, scope });
+                    var result = method.Invoke(null, new object[] { op, scope }) as JObject;
+                    if (result != null)
+                        FoldOpResultIntoPayload(combinedPayload, result);
                     opIndex++;
                 }
 
                 var commit = scope.Commit();
-                return VfxKernelContainer.Shaper.Shape(commit, verbose);
+                return VfxKernelContainer.Shaper.ShapeMutation(commit, verbose, combinedPayload);
+            }
+        }
+
+        // ── per-op result folding ──────────────────────────────────────────────
+        // Each *Inner returns a per-action JObject like {"added": [...]} or
+        // {"removed": [{token}]} or {"connected": {from_token, ...}}. We fold
+        // them into category-keyed JArrays on the combined payload so a 3-op
+        // add batch surfaces a single combined `added[]` of length 3, a mixed
+        // add+remove batch surfaces both `added[]` and `removed[]`, etc.
+        // Single-object values (e.g. connect's `connected: {...}`) are wrapped
+        // in a JArray so the caller always sees a homogeneous array shape.
+
+        private static void FoldOpResultIntoPayload(JObject combined, JObject opResult)
+        {
+            foreach (var prop in opResult.Properties())
+            {
+                JArray bucket = combined[prop.Name] as JArray;
+                if (bucket == null)
+                {
+                    bucket = new JArray();
+                    combined[prop.Name] = bucket;
+                }
+
+                if (prop.Value is JArray arr)
+                    foreach (var item in arr) bucket.Add(item.DeepClone());
+                else
+                    bucket.Add(prop.Value.DeepClone());
             }
         }
 

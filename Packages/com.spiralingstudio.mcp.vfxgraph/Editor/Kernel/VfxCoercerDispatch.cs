@@ -15,6 +15,13 @@
 //   plus many VFX-struct types (AABox, Transform, Sphere, etc.)
 // It does NOT expose enum coercers — this helper handles enums inline by
 // name-or-int parse against the target enum type.
+//
+// W4-B (v0.3.1, cluster C-NEW1): Vector2/3/4 and Color coerce correctly from
+// both JObject ({"x":...} / {"r":...}) and JArray ([x,y,z] / [r,g,b,a]) because
+// the generated coercers already walk the token shape. This dispatch layer
+// adds a small pre-step that rewrites hex-string Color literals ("#RRGGBB" or
+// "#RRGGBBAA") into a JArray so the generated CoerceToColor can consume them
+// without touching the generated file.
 
 using System;
 using Newtonsoft.Json.Linq;
@@ -49,10 +56,20 @@ namespace SpiralingStudio.VfxMcp.Kernel
             if (targetType == typeof(string))  return VfxCoercers.CoerceToString(token);
 
             // Unity math types — generated coercers in VfxCoercers.g.cs.
+            // JObject ({"x":..,"y":..,"z":..}) and JArray ([x,y,z]) inputs are
+            // both handled by the generated coercer bodies; we just forward.
             if (targetType == typeof(UnityEngine.Vector2)) return VfxCoercers.CoerceToVector2(token);
             if (targetType == typeof(UnityEngine.Vector3)) return VfxCoercers.CoerceToVector3(token);
             if (targetType == typeof(UnityEngine.Vector4)) return VfxCoercers.CoerceToVector4(token);
-            if (targetType == typeof(UnityEngine.Color))   return VfxCoercers.CoerceToColor(token);
+            if (targetType == typeof(UnityEngine.Color))
+            {
+                // Pre-pass: rewrite "#RRGGBB" / "#RRGGBBAA" into a JArray so the
+                // generated CoerceToColor (which only accepts Array/Object) can
+                // consume hex literals without needing a regen.
+                if (token.Type == JTokenType.String && TryParseHexColor((string)token, out var hexArr))
+                    token = hexArr;
+                return VfxCoercers.CoerceToColor(token);
+            }
 
             // Enums — no generated coercer, handled inline.
             // Enum-by-name first (string token), then enum-by-int.
@@ -75,6 +92,31 @@ namespace SpiralingStudio.VfxMcp.Kernel
             // but any unmatched type still uses Convert.ChangeType (which will throw
             // for types it cannot handle, matching pre-F7 behavior).
             return System.Convert.ChangeType(value, targetType);
+        }
+
+        // W4-B: parse "#RRGGBB" / "#RRGGBBAA" into a JArray of 0..1 floats so
+        // the generated CoerceToColor can consume it. Returns false if the
+        // string is not a recognized hex-color literal — the caller then passes
+        // the original token through (and CoerceToColor will throw its usual
+        // InvalidCastException for the unrecognized shape).
+        private static bool TryParseHexColor(string s, out JArray rgba)
+        {
+            rgba = null;
+            if (string.IsNullOrEmpty(s)) return false;
+            int start = s[0] == '#' ? 1 : 0;
+            int hexLen = s.Length - start;
+            if (hexLen != 6 && hexLen != 8) return false;
+
+            byte r, g, b, a = 255;
+            if (!byte.TryParse(s.Substring(start + 0, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out r)) return false;
+            if (!byte.TryParse(s.Substring(start + 2, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out g)) return false;
+            if (!byte.TryParse(s.Substring(start + 4, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out b)) return false;
+            if (hexLen == 8 &&
+                !byte.TryParse(s.Substring(start + 6, 2), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out a))
+                return false;
+
+            rgba = new JArray(r / 255f, g / 255f, b / 255f, a / 255f);
+            return true;
         }
     }
 }

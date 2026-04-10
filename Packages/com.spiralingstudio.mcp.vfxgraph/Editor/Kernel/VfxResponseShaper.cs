@@ -68,7 +68,18 @@ namespace SpiralingStudio.VfxMcp.Kernel
                 err["hint"] = "";
             }
 
-            return new JObject { ["error"] = err };
+            // The upstream Python MCP host normalizer (models/unity_response.py
+            // in coplaydev/unity-mcp) strips inner-payload keys matching
+            // {message, error, status, code} to derive its `data` field. An
+            // envelope whose only top-level key is `error` therefore arrives on
+            // the wire as `data: null` with the error body discarded. The
+            // normalizer also has a fast-path early in the function:
+            //   if "success" in response: return response
+            // which passes the inner JObject through unchanged. We use that
+            // fast-path to ship the full error envelope verbatim regardless of
+            // the upstream bug — without this `success: false` discriminator,
+            // every error envelope from every vfx_* tool is silently lost.
+            return new JObject { ["success"] = false, ["error"] = err };
         }
 
         public object ShapeRead(object payload, bool verbose)

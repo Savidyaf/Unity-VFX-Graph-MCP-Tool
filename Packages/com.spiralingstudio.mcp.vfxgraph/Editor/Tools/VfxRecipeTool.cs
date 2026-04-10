@@ -2,13 +2,16 @@
 //
 // Phase 4C — VFX recipe tool scaffold.
 //
-// Recipes are deferred to v0.3.1.  This file provides the minimum required
-// surface so the tool is registered and batch-compatible:
+// W3-D LIFT (v0.3.1): Recipe NAMES are listed here; recipe EXECUTION is
+// deferred to v0.3.2. Calling vfx_recipe.create (or similar) is NOT YET
+// implemented and will return state=not_implemented via unknown_action.
 //
-//   list — the only working action; returns an empty recipe array with a note.
+//   list — returns the canonical catalog of 4 recipe {name, description}
+//          entries. These match the legacy README create_from_recipe names.
 //   any other action — surfaces "unknown_action" via the standard error path.
 //
-// ApplyInTransaction — stub; throws NotImplementedException("v0.3.1").
+// ApplyInTransaction — stub; throws NotImplementedException (recipes don't
+// participate in batches yet).
 
 using MCPForUnity.Editor.Tools;
 using Newtonsoft.Json.Linq;
@@ -31,8 +34,8 @@ namespace SpiralingStudio.VfxMcp.Tools
                     _ => VfxKernelContainer.Shaper.ShapeError(new VfxErrorEnvelope
                     {
                         Code    = "unknown_action",
-                        Message = $"vfx_recipe only supports 'list' in v0.3.0",
-                        Hint    = "Recipes are deferred to v0.3.1.",
+                        Message = $"vfx_recipe only supports 'list' in v0.3.1",
+                        Hint    = "Recipe execution is deferred to v0.3.2.",
                     }),
                 };
             }
@@ -69,11 +72,36 @@ namespace SpiralingStudio.VfxMcp.Tools
         private static object List(JObject @params, bool verbose)
         {
             // Read-only — skip BusyGate and transaction.
-            // Recipes deferred to v0.3.1.
+            // W3-D LIFT: Recipe NAMES are listed here; recipe EXECUTION is
+            // deferred to v0.3.2. Hardcoded because recipes don't exist as a
+            // Unity API — they are scaffolding templates we author ourselves.
+            var recipes = new JArray
+            {
+                new JObject
+                {
+                    ["name"]        = "ecs_buffer_particles",
+                    ["description"] = "Spawn → Init → Update → Output with GraphicsBuffer property and SampleBuffer",
+                },
+                new JObject
+                {
+                    ["name"]        = "simple_spawn_particles",
+                    ["description"] = "Basic particle system with lifetime, velocity, color",
+                },
+                new JObject
+                {
+                    ["name"]        = "gpu_event_chain",
+                    ["description"] = "Parent → child particle system via GPU events",
+                },
+                new JObject
+                {
+                    ["name"]        = "particle_strip_trail",
+                    ["description"] = "Particle strip trail rendering",
+                },
+            };
             var payload = new JObject
             {
-                ["recipes"] = new JArray(),
-                ["note"]    = "Recipes deferred to v0.3.1.",
+                ["recipes"] = recipes,
+                ["total"]   = recipes.Count,
             };
             return VfxKernelContainer.Shaper.ShapeRead(payload, verbose);
         }

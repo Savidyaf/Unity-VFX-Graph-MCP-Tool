@@ -261,11 +261,22 @@ namespace SpiralingStudio.VfxMcp.Tools
             string typeFqn  = model.GetType().FullName;
             Vector2 newPos  = model.position + new Vector2(offsetX, offsetY);
 
+            bool isBlock   = model is VFXBlock;
             bool isContext = model is VFXContext;
             bool isParam   = model is VFXParameter;
 
             string newToken;
-            if (isParam)
+            if (isBlock)
+            {
+                var block = (VFXBlock)model;
+                var parentCtx = block.GetParent() as VFXContext
+                    ?? throw new VfxIdentityException("node_lost",
+                        $"Block {token} has no VFXContext parent", null);
+                string parentToken = VfxKernelContainer.Identity.Mint(guid, parentCtx);
+                int newIndex = parentCtx.GetIndex(block) + 1;
+                newToken = VfxKernelContainer.NodeOps.AddBlock(path, parentToken, typeFqn, newIndex);
+            }
+            else if (isParam)
                 newToken = VfxKernelContainer.NodeOps.AddParameter(path, typeFqn, newPos);
             else if (isContext)
                 newToken = VfxKernelContainer.NodeOps.AddContext(path, typeFqn, newPos);
