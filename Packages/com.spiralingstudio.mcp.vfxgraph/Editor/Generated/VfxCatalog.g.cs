@@ -251,13 +251,6 @@ namespace SpiralingStudio.VfxMcp.Generated
             "UnityEditor.VFX.VFXInlineOperator",
             "UnityEditor.VFX.VFXInlineOperator",
             "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
-            "UnityEditor.VFX.VFXInlineOperator",
             "UnityEditor.VFX.VFXOperatorPointCache",
         };
 
@@ -423,13 +416,6 @@ namespace SpiralingStudio.VfxMcp.Generated
 
         public static readonly string[] Parameters = new string[]
         {
-            "CombatSim.Ballistics.VFX.VFXExplosionRequest",
-            "CombatSim.Ballistics.VFX.VFXImpactRequest",
-            "CombatSim.Ballistics.VFX.VFXMuzzleFlashRequest",
-            "CombatSim.Ballistics.VFX.VFXRicochetRequest",
-            "CombatSim.Ballistics.VFX.VFXSpawnToDataRequest",
-            "CombatSim.Ballistics.VFX.VFXThrusterData",
-            "CombatSim.Ballistics.VFX.VFXTrailData",
             "System.Boolean",
             "System.Int32",
             "System.Single",
@@ -626,13 +612,6 @@ namespace SpiralingStudio.VfxMcp.Generated
 
         public static readonly System.Collections.Generic.Dictionary<string, string> ShortNameToFqn = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase)
         {
-            { "VFXExplosionRequest", "CombatSim.Ballistics.VFX.VFXExplosionRequest" },
-            { "VFXImpactRequest", "CombatSim.Ballistics.VFX.VFXImpactRequest" },
-            { "VFXMuzzleFlashRequest", "CombatSim.Ballistics.VFX.VFXMuzzleFlashRequest" },
-            { "VFXRicochetRequest", "CombatSim.Ballistics.VFX.VFXRicochetRequest" },
-            { "VFXSpawnToDataRequest", "CombatSim.Ballistics.VFX.VFXSpawnToDataRequest" },
-            { "VFXThrusterData", "CombatSim.Ballistics.VFX.VFXThrusterData" },
-            { "VFXTrailData", "CombatSim.Ballistics.VFX.VFXTrailData" },
             { "Boolean", "System.Boolean" },
             { "Int32", "System.Int32" },
             { "Single", "System.Single" },
@@ -1046,13 +1025,6 @@ namespace SpiralingStudio.VfxMcp.Generated
             // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
             // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
             // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
-            // collision (resolved in Quirks.yaml): VFXInlineOperator -> UnityEditor.VFX.VFXInlineOperator
             { "VFXLineOutput", "UnityEditor.VFX.VFXLineOutput" },
             { "VFXMeshOutput", "UnityEditor.VFX.VFXMeshOutput" },
             { "VFXOperatorPointCache", "UnityEditor.VFX.VFXOperatorPointCache" },
@@ -1116,7 +1088,7 @@ namespace SpiralingStudio.VfxMcp.Generated
             { "VFXBasicInitialize", new string[] { "UnityEditor.VFX.VFXBasicInitialize" } },
             { "VFXComposedParticleOutput", new string[] { "UnityEditor.VFX.VFXComposedParticleOutput" } },
             { "VFXDynamicBuiltInParameter", new string[] { "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter", "UnityEditor.VFX.VFXDynamicBuiltInParameter" } },
-            { "VFXInlineOperator", new string[] { "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator" } },
+            { "VFXInlineOperator", new string[] { "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator", "UnityEditor.VFX.VFXInlineOperator" } },
             { "VFXSpawnerBurst", new string[] { "UnityEditor.VFX.VFXSpawnerBurst" } },
             { "VFXSpawnerCustomWrapper", new string[] { "UnityEditor.VFX.VFXSpawnerCustomWrapper", "UnityEditor.VFX.VFXSpawnerCustomWrapper" } },
             { "VFXSpawnerSetAttribute", new string[] { "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute", "UnityEditor.VFX.Block.VFXSpawnerSetAttribute" } },
